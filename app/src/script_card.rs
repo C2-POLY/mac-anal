@@ -6,6 +6,7 @@ use std::sync::mpsc::{self, Receiver};
 use egui::{RichText, ScrollArea};
 
 use crate::actions::{Env, Level};
+use crate::brand::{self, Safety};
 use crate::journal;
 use crate::scripts::{self, Run, Summary};
 
@@ -88,7 +89,10 @@ impl ScriptCard {
             flags.push("utilise le réseau");
         }
         if !flags.is_empty() {
-            ui.colored_label(ui.visuals().error_fg_color, flags.join(" ; "));
+            ui.horizontal(|ui| {
+                brand::safety_icon(ui, Safety::Risky);
+                ui.label(flags.join(" ; "));
+            });
         }
         ui.label(RichText::new("Lecture mot à mot : ce que le script construit en s'exécutant n'apparaît qu'à l'essai à blanc.").small().weak());
         ui.add_space(4.0);
@@ -109,9 +113,15 @@ impl ScriptCard {
             Stage::Tried(run) | Stage::Confirming(run) => {
                 output(ui, "Ce qu'il aurait fait (essai à blanc)", run);
                 if s.sudo {
-                    ui.colored_label(ui.visuals().error_fg_color, "Ce script demande sudo : mac-anal ne le lance pas. Copie-le dans le Terminal si tu le veux vraiment.");
+                    ui.horizontal(|ui| {
+                        brand::safety_icon(ui, Safety::Risky);
+                        ui.label("Ce script demande sudo : Mac Anal ne le lance pas. Copie-le dans le Terminal si tu le veux vraiment.");
+                    });
                 } else if matches!(self.stage, Stage::Confirming(_)) {
-                    ui.colored_label(ui.visuals().error_fg_color, "Ce script modifie le Mac et ne peut pas être annulé.");
+                    ui.horizontal(|ui| {
+                        brand::safety_icon(ui, Safety::Risky);
+                        ui.label("Ce script modifie le Mac et ne peut pas être annulé.");
+                    });
                     ui.horizontal(|ui| {
                         if ui.button("Confirmer").clicked() {
                             next = Some(true);

@@ -168,14 +168,14 @@ fn icon(w: Widget, bar: &Bar) -> Result<Icon, String> {
     let alerts = MenuItem::with_id(ALERT, "Aucune alerte", false, None);
     let clear = MenuItem::with_id(CLEAR, "Vider le plus gros cache", false, None);
     let undo = MenuItem::with_id(UNDO, "Annuler la dernière action", false, None);
-    let open = MenuItem::with_id(OPEN, "Ouvrir mac-anal", true, None);
-    let quit = MenuItem::with_id(QUIT, "Quitter mac-anal", true, None);
+    let open = MenuItem::with_id(OPEN, "Ouvrir Mac Anal", true, None);
+    let quit = MenuItem::with_id(QUIT, "Quitter Mac Anal", true, None);
     let menu = Menu::new();
     let sep = PredefinedMenuItem::separator;
     menu.append_items(&[&detail, &sep(), &alerts, &sep(), &clear, &undo, &sep(), &open, &quit]).map_err(|e| e.to_string())?;
     let tray = TrayIconBuilder::new()
         .with_title(title(w, &bar.last))
-        .with_tooltip(format!("mac-anal : {}", w.name()))
+        .with_tooltip(format!("Mac Anal : {}", w.name()))
         .with_menu(Box::new(menu))
         .build()
         .map_err(|e| e.to_string())?;

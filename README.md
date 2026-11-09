@@ -31,6 +31,17 @@ Claude Desktop, in `~/Library/Application Support/Claude/claude_desktop_config.j
 { "mcpServers": { "mac-anal": { "command": "/path/to/mac-anal/app/target/release/mac-anal", "args": ["mcp"] } } }
 ```
 
+## Design
+
+The colours, fonts, logotype and icon follow the [design document](https://claude.ai/artifact/LrLhk84VLHVZVRL5dpCriD); its tokens live in `app/src/theme.rs`, the logotype and safety icons in `app/src/brand.rs`.
+
+- Bricolage Grotesque, the brand font, ships in `app/assets/` under the SIL Open Font License (`OFL.txt`). The interface uses SF, read from `/System/Library/Fonts` at launch, and falls back to egui's font without it.
+- `app/assets/` holds the icon sources from the document (`broom.svg`, `icon-foreground.svg`, `icon-legacy.svg`, `icon-small.svg`). The Dock icon is `icon.png`, drawn from `icon-legacy.svg`; after changing the SVG, draw it again:
+
+```bash
+cargo test -- --ignored icon_png_is_current
+```
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.

@@ -5,15 +5,17 @@
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke};
+use egui::{CornerRadius, Frame, Margin, RichText, Stroke};
 use serde_json::Value;
 
 use crate::actions::{self, Action, Done, Env, Level, Prepared};
 use crate::ai;
+use crate::brand::{self, Safety};
 use crate::investigate::{self, Progress};
+use crate::journal::{self, Origin};
 use crate::script_card::ScriptCard;
 use crate::scripts;
-use crate::journal::{self, Origin};
+use crate::theme;
 
 /// What the AI proposed, checked by the app.
 pub struct Plan {
@@ -173,7 +175,7 @@ impl Assistant {
         let busy = self.pending.is_some();
         ui.horizontal(|ui| {
             let ready = !busy && self.writing.is_none() && !self.question.trim().is_empty();
-            if ui.add_enabled(ready, egui::Button::new("Demander")).clicked() {
+            if ui.add_enabled(ready, theme::primary_button(ui, "Demander")).clicked() {
                 self.ask(ui.ctx());
             }
             if ui.add_enabled(ready, egui::Button::new("Écrire un script")).on_hover_text("Pour ce que les actions connues ne couvrent pas.").clicked() {
@@ -234,34 +236,37 @@ impl Assistant {
     }
 }
 
-fn level_color(ui: &egui::Ui, level: Level) -> Color32 {
+/// Changing nothing is safe, what can be put back deserves a look, what cannot is risky.
+fn level_safety(level: Level) -> Safety {
     match level {
-        Level::Read => ui.visuals().weak_text_color(),
-        Level::Reversible => Color32::from_rgb(52, 168, 83),
-        Level::Irreversible => ui.visuals().error_fg_color,
+        Level::Read => Safety::Safe,
+        Level::Reversible => Safety::Review,
+        Level::Irreversible => Safety::Risky,
     }
 }
 
 fn item_card(ui: &mut egui::Ui, env: Option<&Env>, item: &mut Item) {
     let visuals = ui.visuals().clone();
+    let palette = theme::palette(ui);
     Frame::new()
-        .fill(visuals.faint_bg_color)
-        .stroke(Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color))
-        .corner_radius(CornerRadius::same(8))
+        .fill(palette.surface)
+        .stroke(Stroke::new(1.0, palette.separator))
+        .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             let p = match &item.proposal {
                 Ok(p) => p,
                 Err(why) => {
-                    ui.label(RichText::new("Action refusée").strong());
+                    ui.label(RichText::new("Action refusée").text_style(theme::headline()));
                     ui.label(RichText::new(why).weak());
                     return;
                 }
             };
             ui.horizontal(|ui| {
-                ui.label(RichText::new(p.level.label()).small().color(level_color(ui, p.level)));
-                ui.label(RichText::new(&p.title).strong());
+                brand::safety_icon(ui, level_safety(p.level));
+                ui.label(RichText::new(p.level.label()).small());
+                ui.label(RichText::new(&p.title).text_style(theme::headline()));
             });
             ui.label(RichText::new(&p.preview).weak());
             ui.add_space(4.0);
@@ -274,7 +279,10 @@ fn item_card(ui: &mut egui::Ui, env: Option<&Env>, item: &mut Item) {
                     }
                 }
                 State::Confirming => {
-                    ui.colored_label(visuals.error_fg_color, "Cette action ne peut pas être annulée.");
+                    ui.horizontal(|ui| {
+                        brand::safety_icon(ui, Safety::Risky);
+                        ui.label("Cette action ne peut pas être annulée.");
+                    });
                     ui.horizontal(|ui| {
                         if ui.button("Confirmer").clicked() {
                             next = Some(run(env, p, true));
@@ -435,6 +443,13 @@ fn sample_plan() -> Plan {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn each_level_shows_its_safety_colour() {
+        assert_eq!(level_safety(Level::Read).color(), theme::SAFE);
+        assert_eq!(level_safety(Level::Reversible).color(), theme::REVIEW);
+        assert_eq!(level_safety(Level::Irreversible).color(), theme::RISKY);
+    }
 
     #[test]
     fn a_plan_keeps_refused_actions_apart() {

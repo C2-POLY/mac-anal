@@ -173,7 +173,7 @@ pub fn prepare(env: &Env, action: Action) -> Result<Prepared, String> {
             let pid = *pid;
             // Above i32::MAX the PID would turn negative as a pid_t, and kill() would signal a group.
             if pid <= 1 || libc::pid_t::try_from(pid).is_err() || pid == std::process::id() {
-                return Err(format!("Le processus {pid} ne peut pas être quitté par mac-anal."));
+                return Err(format!("Le processus {pid} ne peut pas être quitté par Mac Anal."));
             }
             let (user, name) = process_owner_and_name(pid).ok_or_else(|| format!("Aucun processus {pid}."))?;
             if Some(user.as_str()) != current_user().as_deref() {
@@ -255,7 +255,7 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
             if prepare(env, prepared.action.clone()).map(|now| now.title) != Ok(prepared.title.clone()) {
                 return Err(format!("Le processus {pid} n'est plus celui proposé : rien n'a été fait."));
             }
-            let raw = libc::pid_t::try_from(*pid).map_err(|_| format!("Le processus {pid} ne peut pas être quitté par mac-anal."))?;
+            let raw = libc::pid_t::try_from(*pid).map_err(|_| format!("Le processus {pid} ne peut pas être quitté par Mac Anal."))?;
             // SAFETY: kill only sends a signal; prepare() refused launchd, mac-anal, other users'
             // processes and any PID that is not positive as a pid_t.
             let r = unsafe { libc::kill(raw, libc::SIGTERM) };

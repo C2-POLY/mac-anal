@@ -53,6 +53,7 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext, screenshot: Option<PathBuf>) -> Self {
+        crate::theme::apply(&cc.egui_ctx);
         cc.egui_ctx.set_theme(appearance(std::env::var("MAC_ANAL_APPEARANCE").ok().as_deref()));
         // The screenshot mode reads nothing on the Mac: it shows invented values.
         let overview = if screenshot.is_some() { Overview::sample() } else { Overview::default() };
@@ -193,7 +194,7 @@ impl App {
         ui.add_space(24.0);
         ui.heading("Surveillance");
         ui.add_space(4.0);
-        ui.label(egui::RichText::new("Vérifiée chaque minute en arrière-plan par launchd, sans réseau ni IA, même mac-anal fermé.").weak());
+        ui.label(egui::RichText::new("Vérifiée chaque minute en arrière-plan par launchd, sans réseau ni IA, même Mac Anal fermé.").weak());
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.watch_sentence).hint_text("Ex. : préviens-moi si le disque passe sous 10 %").desired_width(360.0));
@@ -341,7 +342,7 @@ impl App {
         ui.add_space(24.0);
         ui.heading("Tâches planifiées");
         ui.add_space(4.0);
-        ui.label(egui::RichText::new("Lancées par launchd à leur heure, même mac-anal fermé : actions réversibles et scripts en lecture seule uniquement.").weak());
+        ui.label(egui::RichText::new("Lancées par launchd à leur heure, même Mac Anal fermé : actions réversibles et scripts en lecture seule uniquement.").weak());
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.task_sentence).hint_text("Ex. : chaque lundi, vide les DerivedData de plus de 30 jours").desired_width(360.0));
