@@ -1,0 +1,15 @@
+.DS_Store
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.keystore
+*.p12
+*.pem
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# oh-my-claudecode runtime state
+.omc/
