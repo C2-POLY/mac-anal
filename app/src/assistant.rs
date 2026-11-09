@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use crate::actions::{self, Action, Done, Env, Level, Prepared, CATALOG};
 use crate::ai;
+use crate::journal::{self, Origin};
 
 /// What the AI proposed, checked by the app.
 pub struct Plan {
@@ -180,7 +181,11 @@ fn item_card(ui: &mut egui::Ui, env: Option<&Env>, item: &mut Item) {
                     ui.label(&done.summary);
                     if let Some(u) = &done.undo {
                         if ui.button("Annuler").clicked() {
-                            next = Some(match actions::undo(u) {
+                            let undone = match (env, done.entry) {
+                                (Some(env), Some(id)) => journal::undo(env, id),
+                                _ => actions::undo(u),
+                            };
+                            next = Some(match undone {
                                 Ok(()) => State::Undone,
                                 Err(e) => State::Failed(e),
                             });
@@ -202,7 +207,7 @@ fn item_card(ui: &mut egui::Ui, env: Option<&Env>, item: &mut Item) {
 
 fn run(env: Option<&Env>, p: &Prepared, confirmed: bool) -> State {
     let Some(env) = env else { return State::Failed("Dossier personnel introuvable (HOME).".into()) };
-    match actions::execute(env, p, confirmed) {
+    match journal::run(env, Origin::Assistant, p, confirmed) {
         Ok(done) => State::Done(done),
         Err(e) => State::Failed(e),
     }
@@ -280,6 +285,8 @@ fn context(env: &Env) -> String {
             out.push_str(&format!("- {label}\n"));
         }
     }
+    out.push_str("What mac-anal did lately (journal, newest first):\n");
+    out.push_str(&journal::summary(env, 10));
     out.push_str("Processes of the user using the most memory (pid, memory, name):\n");
     for line in top_processes(10) {
         out.push_str(&format!("- {line}\n"));
@@ -326,7 +333,7 @@ fn sample_plan() -> Plan {
                     "Désactiver com.example.updater au démarrage",
                     "Met de côté ~/Library/LaunchAgents/com.example.updater.plist ; il ne se lancera plus à la prochaine ouverture de session.",
                 )),
-                state: State::Done(Done { summary: "com.example.updater ne se lancera plus au démarrage.".into(), undo: None }),
+                state: State::Done(Done { summary: "com.example.updater ne se lancera plus au démarrage.".into(), undo: None, entry: None }),
             },
             Item {
                 proposal: Ok(p(

@@ -11,7 +11,8 @@ use dispatch2::DispatchQueue;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
-use crate::actions::{self, Action, Env, Level, Prepared, Undo};
+use crate::actions::{self, Action, Env, Level, Prepared};
+use crate::journal::{self, Origin};
 use crate::overview::{format_bytes, Overview};
 use crate::settings::{Settings, Widget};
 
@@ -76,7 +77,8 @@ struct Bar {
     icons: Vec<Icon>,
     last: Overview,
     largest: Option<(String, u64)>,
-    undo: Option<Undo>,
+    /// The journal entry of the last quick action, to undo it.
+    undo: Option<u64>,
     note: Option<String>,
 }
 
@@ -193,9 +195,9 @@ fn handle(id: &str) {
             QUIT => std::process::exit(0),
             CLEAR => {
                 let (Some(env), Some((name, _))) = (&bar.env, bar.largest.clone()) else { return };
-                match quick(env, Action::ClearCache { name: name.clone() }).and_then(|p| actions::execute(env, &p, false)) {
+                match quick(env, Action::ClearCache { name: name.clone() }).and_then(|p| journal::run(env, Origin::MenuBar, &p, false)) {
                     Ok(done) => {
-                        bar.undo = done.undo;
+                        bar.undo = done.entry.filter(|_| done.undo.is_some());
                         bar.note = Some(format!("vider {name}"));
                         bar.largest = None;
                     }
@@ -203,8 +205,8 @@ fn handle(id: &str) {
                 }
             }
             UNDO => {
-                if let Some(u) = bar.undo.take() {
-                    if let Err(e) = actions::undo(&u) {
+                if let (Some(env), Some(id)) = (&bar.env, bar.undo.take()) {
+                    if let Err(e) = journal::undo(env, id) {
                         eprintln!("undo: {e}");
                     }
                 }
