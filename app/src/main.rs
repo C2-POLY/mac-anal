@@ -2,6 +2,7 @@ mod actions;
 mod ai;
 mod app;
 mod assistant;
+mod investigate;
 mod journal;
 mod menubar;
 mod metrics;
