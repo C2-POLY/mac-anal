@@ -1,4 +1,7 @@
+mod actions;
+mod ai;
 mod app;
+mod assistant;
 mod overview;
 
 use std::path::PathBuf;

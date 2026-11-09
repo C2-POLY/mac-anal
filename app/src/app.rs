@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use egui::ThemePreference;
 
+use crate::assistant::Assistant;
 use crate::overview::Overview;
 
 /// Frames drawn before the screenshot is taken, so fonts and layout have settled.
@@ -11,6 +12,7 @@ const SHOT_TIMEOUT: u32 = 600;
 
 pub struct App {
     overview: Overview,
+    assistant: Assistant,
     /// `--screenshot <file>`: draw the sample data, save the window there, then quit.
     screenshot: Option<PathBuf>,
     frame: u32,
@@ -22,7 +24,9 @@ impl App {
         cc.egui_ctx.set_theme(appearance(std::env::var("MAC_ANAL_APPEARANCE").ok().as_deref()));
         // The screenshot mode reads nothing on the Mac: it shows invented values.
         let overview = if screenshot.is_some() { Overview::sample() } else { Overview::default() };
-        Self { overview, screenshot, frame: 0, shot_requested: false }
+        // MAC_ANAL_ASSISTANT=1 shows an invented plan in a screenshot.
+        let sample_plan = screenshot.is_some() && std::env::var("MAC_ANAL_ASSISTANT").is_ok_and(|v| v == "1");
+        Self { overview, assistant: Assistant::new(sample_plan), screenshot, frame: 0, shot_requested: false }
     }
 
     fn screenshot_step(&mut self, ctx: &egui::Context) {
@@ -64,6 +68,7 @@ fn appearance(value: Option<&str>) -> ThemePreference {
 impl eframe::App for App {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
+        egui::Panel::right("assistant").default_size(400.0).min_size(320.0).show(root, |ui| self.assistant.show(ui));
         egui::CentralPanel::default().show(root, |ui| self.overview.show(ui));
         self.screenshot_step(&ctx);
     }
