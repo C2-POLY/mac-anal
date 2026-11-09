@@ -170,6 +170,10 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
             Ok(Done { summary: format!("{name} est dans la Corbeille."), undo: Some(Undo { moves: vec![(from, to)] }) })
         }
         Action::QuitProcess { pid } => {
+            // The PID may have been reused since the plan: check it is still the same process of the user.
+            if prepare(env, prepared.action.clone()).map(|now| now.title) != Ok(prepared.title.clone()) {
+                return Err(format!("Le processus {pid} n'est plus celui proposé : rien n'a été fait."));
+            }
             // SAFETY: kill only sends a signal; prepare() refused launchd, mac-anal and other users' processes.
             let r = unsafe { libc::kill(*pid as libc::pid_t, libc::SIGTERM) };
             if r != 0 {
@@ -362,6 +366,11 @@ mod tests {
         assert_eq!(p.level, Level::Irreversible);
         assert!(execute(&env, &p, false).is_err());
         assert!(child.try_wait().unwrap().is_none(), "ran without confirmation");
+
+        let mut stale = p.clone();
+        stale.title = "Quitter autre-chose".into();
+        assert!(execute(&env, &stale, true).is_err(), "a reused PID must be refused");
+        assert!(child.try_wait().unwrap().is_none());
 
         execute(&env, &p, true).unwrap();
         let status = child.wait().unwrap();
