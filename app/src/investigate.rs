@@ -242,7 +242,7 @@ pub fn schema(answer_only: bool) -> Value {
             "properties": {
                 "message": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "string"}},
-                "actions": {"type": "array", "items": crate::actions::json_schema()}
+                "actions": {"type": "array", "description": "At most 10 actions.", "items": crate::actions::json_schema()}
             },
             "required": ["message", "evidence", "actions"],
             "additionalProperties": false
