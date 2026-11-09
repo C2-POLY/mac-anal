@@ -6,6 +6,7 @@ use egui::ThemePreference;
 use crate::actions::Env;
 use crate::journal::{self, Entry};
 use crate::rules::{self, Alert, Rule};
+use crate::tasks::{self, LastRun, Task};
 use crate::assistant::Assistant;
 use crate::overview::Overview;
 use crate::settings::{Settings, Widget};
@@ -35,6 +36,13 @@ pub struct App {
     watch: (u64, Vec<Rule>, Vec<Alert>),
     watch_read_at: Option<std::time::Instant>,
     watch_error: Option<String>,
+    /// Scheduled tasks: the sentence, Claude's proposal with what it will do, the tasks as last read.
+    task_sentence: String,
+    task_pending: Option<Receiver<Result<Task, String>>>,
+    task_proposal: Option<(Task, Result<String, String>)>,
+    tasks: (u64, Vec<Task>, std::collections::BTreeMap<u64, LastRun>),
+    tasks_read_at: Option<std::time::Instant>,
+    task_error: Option<String>,
     /// The script library as last read, with the generation it was read at.
     library: (u64, Vec<crate::scripts::Saved>),
     /// `--screenshot <file>`: draw the sample data, save the window there, then quit.
@@ -93,6 +101,12 @@ impl App {
             watch: (u64::MAX, Vec::new(), Vec::new()),
             watch_read_at: None,
             watch_error: None,
+            task_sentence: String::new(),
+            task_pending: None,
+            task_proposal: None,
+            tasks: (u64::MAX, Vec::new(), Default::default()),
+            tasks_read_at: None,
+            task_error: None,
             library: (u64::MAX, Vec::new()),
             env: env_kept,
             screenshot,
@@ -290,6 +304,143 @@ impl App {
         }
     }
 
+    /// Recurring tasks stated in a sentence, each a launchd agent; only reversible actions and
+    /// read-only scripts.
+    fn tasks_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(env) = self.env.clone() else { return };
+        let live = self.screenshot.is_none();
+        if live {
+            // The last runs are written by `mac-anal run-task`, another process: read them now and then.
+            let stale = self.tasks_read_at.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(5));
+            if self.tasks.0 != tasks::generation() || stale {
+                self.tasks = (tasks::generation(), tasks::tasks(&env), tasks::last_runs(&env));
+                self.tasks_read_at = Some(std::time::Instant::now());
+            }
+        } else if self.tasks.0 == u64::MAX {
+            self.tasks.0 = 0;
+            if std::env::var("MAC_ANAL_TASKS").is_ok_and(|v| v == "1") {
+                let (t, r, p) = tasks::sample();
+                self.tasks = (0, t, r);
+                self.task_sentence = "chaque vendredi à 17 h, mets à la Corbeille les téléchargements de plus de 90 jours".into();
+                self.task_proposal = Some((p, Ok("37 éléments de ~/Downloads inchangés depuis 90 jours (4,2 Go) partent à la Corbeille.".into())));
+            }
+        }
+        if let Some(rx) = &self.task_pending {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(t) => {
+                        let check = t.check(&env);
+                        self.task_proposal = Some((t, check));
+                    }
+                    Err(e) => self.task_error = Some(e),
+                }
+                self.task_pending = None;
+            }
+        }
+
+        ui.add_space(24.0);
+        ui.heading("Tâches planifiées");
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Lancées par launchd à leur heure, même mac-anal fermé : actions réversibles et scripts en lecture seule uniquement.").weak());
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.task_sentence).hint_text("Ex. : chaque lundi, vide les DerivedData de plus de 30 jours").desired_width(360.0));
+            let ready = self.task_pending.is_none() && !self.task_sentence.trim().is_empty();
+            if ui.add_enabled(ready, egui::Button::new("Préparer la tâche")).clicked() {
+                let (tx, rx) = mpsc::channel();
+                let sentence = self.task_sentence.trim().to_string();
+                let (ctx, env) = (ui.ctx().clone(), env.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(tasks::from_sentence(&crate::ai::command(), &env, &sentence));
+                    ctx.request_repaint();
+                });
+                self.task_pending = Some(rx);
+                self.task_error = None;
+            }
+            if self.task_pending.is_some() {
+                ui.spinner();
+            }
+        });
+
+        let mut decided = None;
+        if let Some((t, check)) = &self.task_proposal {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(format!("Tâche proposée : {} ({})", t.name, t.schedule())).strong());
+            match check {
+                Ok(what) => {
+                    ui.label(egui::RichText::new(what).weak());
+                }
+                Err(e) => {
+                    ui.colored_label(ui.visuals().error_fg_color, e);
+                }
+            }
+            if let Ok(plist) = t.plist() {
+                egui::CollapsingHeader::new("Le plist chargé dans launchd").id_salt("plist").show(ui, |ui| {
+                    ui.label(egui::RichText::new(plist).monospace().small());
+                });
+            }
+            ui.horizontal(|ui| {
+                if ui.add_enabled(check.is_ok(), egui::Button::new("Programmer")).clicked() {
+                    decided = Some(true);
+                }
+                if ui.button("Annuler").clicked() {
+                    decided = Some(false);
+                }
+            });
+        }
+        if let Some(go) = decided {
+            if let Some((t, _)) = self.task_proposal.take() {
+                if go && live {
+                    match tasks::schedule(&env, crate::launchd::LAUNCHCTL, t) {
+                        Ok(_) => self.task_sentence.clear(),
+                        Err(e) => self.task_error = Some(e),
+                    }
+                }
+            }
+        }
+
+        let now = journal::now();
+        let mut toggle = None;
+        let mut remove = None;
+        for t in &self.tasks.1 {
+            ui.horizontal_wrapped(|ui| {
+                let mut active = !t.paused;
+                if ui.checkbox(&mut active, "").on_hover_text("Active ou en pause").changed() {
+                    toggle = Some((t.id, !active));
+                }
+                ui.label(egui::RichText::new(&t.name).strong());
+                ui.label(egui::RichText::new(t.schedule()).weak());
+                if !t.paused {
+                    if let Some(next) = t.next_run(now) {
+                        ui.label(egui::RichText::new(format!("prochaine : {}", journal::date(next))).weak());
+                    }
+                }
+                if ui.small_button("Supprimer").clicked() {
+                    remove = Some(t.id);
+                }
+            });
+            if let Some(last) = self.tasks.2.get(&t.id) {
+                let text = format!("Dernière exécution {} : {}", journal::date(last.at), last.summary);
+                if last.ok {
+                    ui.label(egui::RichText::new(text).weak());
+                } else {
+                    ui.colored_label(ui.visuals().error_fg_color, text);
+                }
+            }
+        }
+        if live {
+            if let Some((id, paused)) = toggle {
+                self.task_error = tasks::set_paused(&env, crate::launchd::LAUNCHCTL, id, paused).err();
+            }
+            if let Some(id) = remove {
+                self.task_error = tasks::remove(&env, crate::launchd::LAUNCHCTL, id).err();
+            }
+        }
+        if let Some(e) = &self.task_error {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+    }
+
     fn journal_ui(&mut self, ui: &mut egui::Ui) {
         ui.add_space(24.0);
         ui.heading("Journal");
@@ -425,6 +576,7 @@ impl eframe::App for App {
                 self.overview.show(ui);
                 self.settings_ui(ui);
                 self.surveillance_ui(ui);
+                self.tasks_ui(ui);
                 self.scripts_ui(ui);
                 self.journal_ui(ui);
             });

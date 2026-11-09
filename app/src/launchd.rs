@@ -12,13 +12,22 @@ pub const PREFIX: &str = "ai.c2poly.mac-anal.";
 /// The real command; tests hand a stand-in to the functions instead.
 pub const LAUNCHCTL: &str = "launchctl";
 
-/// An agent that runs a command every `interval` seconds.
+/// When launchd starts an agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trigger {
+    /// Every so many seconds, and once when loaded.
+    Every(u32),
+    /// At a time of day, every day or on one weekday (0 is Sunday).
+    Calendar { weekday: Option<u8>, hour: u8, minute: u8 },
+}
+
+/// An agent that runs a command on a trigger.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Agent {
     /// The part after the prefix, for example `check`.
     pub name: String,
     pub program: Vec<String>,
-    pub interval: u32,
+    pub trigger: Trigger,
 }
 
 impl Agent {
@@ -38,12 +47,17 @@ impl Agent {
              <plist version=\"1.0\">\n<dict>\n\
              \t<key>Label</key>\n\t<string>{}</string>\n\
              \t<key>ProgramArguments</key>\n\t<array>\n{args}\t</array>\n\
-             \t<key>StartInterval</key>\n\t<integer>{}</integer>\n\
-             \t<key>RunAtLoad</key>\n\t<true/>\n\
+             {}\
              \t<key>ProcessType</key>\n\t<string>Background</string>\n\
              </dict>\n</plist>\n",
             xml(&self.label()),
-            self.interval
+            match self.trigger {
+                Trigger::Every(secs) => format!("\t<key>StartInterval</key>\n\t<integer>{secs}</integer>\n\t<key>RunAtLoad</key>\n\t<true/>\n"),
+                Trigger::Calendar { weekday, hour, minute } => {
+                    let day = weekday.map(|d| format!("\t\t<key>Weekday</key>\n\t\t<integer>{d}</integer>\n")).unwrap_or_default();
+                    format!("\t<key>StartCalendarInterval</key>\n\t<dict>\n{day}\t\t<key>Hour</key>\n\t\t<integer>{hour}</integer>\n\t\t<key>Minute</key>\n\t\t<integer>{minute}</integer>\n\t</dict>\n")
+                }
+            }
         )
     }
 }
@@ -70,7 +84,7 @@ pub fn install(launchctl: &str, env: &Env, agent: &Agent) -> Result<(), String> 
 
 /// Unloads the agent and moves its plist to the Trash.
 pub fn uninstall(launchctl: &str, env: &Env, name: &str) -> Result<(), String> {
-    let agent = Agent { name: name.into(), program: Vec::new(), interval: 0 };
+    let agent = Agent { name: name.into(), program: Vec::new(), trigger: Trigger::Every(0) };
     let _ = run(launchctl, &["bootout", &format!("{}/{}", domain(), agent.label())]);
     let path = agent.path(env);
     if path.exists() {
@@ -82,7 +96,7 @@ pub fn uninstall(launchctl: &str, env: &Env, name: &str) -> Result<(), String> {
 }
 
 pub fn installed(env: &Env, name: &str) -> bool {
-    Agent { name: name.into(), program: Vec::new(), interval: 0 }.path(env).is_file()
+    Agent { name: name.into(), program: Vec::new(), trigger: Trigger::Every(0) }.path(env).is_file()
 }
 
 fn free(dir: &Path, name: &str) -> PathBuf {
@@ -122,7 +136,7 @@ pub mod tests {
         let env = Env { home: d.path().join("home") };
         let fake = fake_launchctl(d.path());
         let fake = fake.to_str().unwrap();
-        let agent = Agent { name: "check".into(), program: vec!["/Apps/mac anal".into(), "check".into()], interval: 60 };
+        let agent = Agent { name: "check".into(), program: vec!["/Apps/mac anal".into(), "check".into()], trigger: Trigger::Every(60) };
         install(fake, &env, &agent).unwrap();
         let plist = std::fs::read_to_string(agent.path(&env)).unwrap();
         assert!(plist.contains("<string>ai.c2poly.mac-anal.check</string>"));
@@ -138,7 +152,17 @@ pub mod tests {
 
     #[test]
     fn labels_are_escaped() {
-        let a = Agent { name: "x".into(), program: vec!["a<b>&\"c\"".into()], interval: 5 };
+        let a = Agent { name: "x".into(), program: vec!["a<b>&\"c\"".into()], trigger: Trigger::Every(5) };
         assert!(a.plist().contains("a&lt;b&gt;&amp;&quot;c&quot;"));
+    }
+
+    #[test]
+    fn a_calendar_agent_runs_at_its_time() {
+        let a = Agent { name: "task-1".into(), program: vec!["x".into()], trigger: Trigger::Calendar { weekday: Some(1), hour: 9, minute: 5 } };
+        let p = a.plist();
+        assert!(p.contains("<key>StartCalendarInterval</key>") && p.contains("<key>Weekday</key>\n\t\t<integer>1</integer>"));
+        assert!(p.contains("<key>Hour</key>\n\t\t<integer>9</integer>") && !p.contains("RunAtLoad"));
+        let daily = Agent { trigger: Trigger::Calendar { weekday: None, hour: 9, minute: 5 }, ..a };
+        assert!(!daily.plist().contains("Weekday"));
     }
 }

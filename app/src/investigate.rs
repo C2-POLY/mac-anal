@@ -249,6 +249,7 @@ pub fn schema(answer_only: bool) -> Value {
                     action("clear_cache", "name", "string"),
                     action("quit_process", "pid", "integer"),
                     action("disable_login_item", "label", "string"),
+                    json!({"type": "object", "properties": {"kind": {"const": "trash_old_items"}, "folder": {"enum": ["derived_data", "caches", "downloads"]}, "days": {"type": "integer"}}, "required": ["kind", "folder", "days"], "additionalProperties": false}),
                 ]}}
             },
             "required": ["message", "evidence", "actions"],

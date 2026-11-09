@@ -39,6 +39,9 @@ pub enum Action {
     QuitProcess { pid: u32 },
     /// Set aside `~/Library/LaunchAgents/<label>.plist`, so it no longer starts at login.
     DisableLoginItem { label: String },
+    /// Send to the Trash what has not changed for `days` days in a known folder (`derived_data`,
+    /// `caches`, `downloads`).
+    TrashOldItems { folder: String, days: u32 },
 }
 
 /// The kinds the AI may use, with what each takes, for its instructions and its JSON schema.
@@ -46,6 +49,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("clear_cache", "name: a folder directly under ~/Library/Caches (Trash, can be undone)"),
     ("quit_process", "pid: a process of the user (asks it to quit; unsaved work may be lost)"),
     ("disable_login_item", "label: a user LaunchAgent, ~/Library/LaunchAgents/<label>.plist (set aside, can be undone)"),
+    ("trash_old_items", "folder: derived_data (Xcode), caches or downloads; days: unchanged for at least that many days (Trash, can be undone)"),
 ];
 
 /// Where the actions read and write: the user's home, replaced by a temporary folder in tests.
@@ -69,6 +73,16 @@ impl Env {
 
     fn trash(&self) -> PathBuf {
         self.home.join(".Trash")
+    }
+
+    /// The folders `trash_old_items` may clean, by key.
+    pub fn old_folder(&self, key: &str) -> Option<PathBuf> {
+        match key {
+            "derived_data" => Some(self.home.join("Library/Developer/Xcode/DerivedData")),
+            "caches" => Some(self.caches()),
+            "downloads" => Some(self.home.join("Downloads")),
+            _ => None,
+        }
     }
 
     /// Where disabled login items wait until they are put back.
@@ -163,7 +177,40 @@ pub fn prepare(env: &Env, action: Action) -> Result<Prepared, String> {
                 action,
             })
         }
+        Action::TrashOldItems { folder, days } => {
+            let dir = env.old_folder(folder).ok_or_else(|| format!("Dossier inconnu : « {folder} »."))?;
+            if !(1..=3650).contains(days) {
+                return Err(format!("Durée hors limites : {days} jours."));
+            }
+            if !dir.is_dir() {
+                return Err(format!("{} n'existe pas.", dir.display()));
+            }
+            let old = old_items(&dir, *days);
+            let bytes: u64 = old.iter().map(|o| o.1).sum();
+            Ok(Prepared {
+                title: format!("Envoyer à la Corbeille ce qui a plus de {days} jours dans {}", dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+                preview: format!("{} éléments de {} inchangés depuis {days} jours ({}) partent à la Corbeille.", old.len(), dir.display(), crate::overview::format_bytes(bytes)),
+                level: Level::Reversible,
+                action,
+            })
+        }
     }
+}
+
+/// The items directly in `dir` unchanged for at least `days` days, with their size.
+pub fn old_items(dir: &Path, days: u32) -> Vec<(PathBuf, u64)> {
+    let limit = SystemTime::now().checked_sub(std::time::Duration::from_secs(days as u64 * 86_400)).unwrap_or(UNIX_EPOCH);
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < limit))
+        .map(|e| {
+            let p = e.path();
+            let size = if p.is_dir() { folder_size(&p).0 } else { e.metadata().map(|m| m.len()).unwrap_or(0) };
+            (p, size)
+        })
+        .collect()
 }
 
 /// Runs a prepared action. An irreversible one runs only once `confirmed` is true.
@@ -196,6 +243,23 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
             let to = free_path(&env.disabled_items(), &file);
             move_to(&from, &to)?;
             Ok(Done { summary: format!("{label} ne se lancera plus au démarrage."), undo: Some(Undo { moves: vec![(from, to)] }), entry: None })
+        }
+        Action::TrashOldItems { folder, days } => {
+            let dir = env.old_folder(folder).ok_or_else(|| format!("Dossier inconnu : « {folder} »."))?;
+            let mut moves = Vec::new();
+            for (from, _) in old_items(&dir, *days) {
+                let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let to = free_path(&env.trash(), &name);
+                if let Err(e) = move_to(&from, &to) {
+                    // What already moved stays undoable.
+                    if !moves.is_empty() {
+                        break;
+                    }
+                    return Err(e);
+                }
+                moves.push((from, to));
+            }
+            Ok(Done { summary: format!("{} éléments sont dans la Corbeille.", moves.len()), undo: Some(Undo { moves }), entry: None })
         }
     }
 }
@@ -384,5 +448,27 @@ mod tests {
         execute(&env, &p, true).unwrap();
         let status = child.wait().unwrap();
         assert!(!status.success());
+    }
+
+    #[test]
+    fn old_items_go_to_the_trash_and_come_back() {
+        let (_d, env) = home();
+        let dd = env.old_folder("derived_data").unwrap();
+        std::fs::create_dir_all(dd.join("Old-abc")).unwrap();
+        std::fs::create_dir_all(dd.join("New-def")).unwrap();
+        std::fs::write(dd.join("Old-abc/f"), vec![0u8; 10]).unwrap();
+        let old = SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+        std::fs::File::open(dd.join("Old-abc")).unwrap().set_modified(old).unwrap();
+
+        assert!(prepare(&env, Action::TrashOldItems { folder: "../etc".into(), days: 30 }).is_err());
+        assert!(prepare(&env, Action::TrashOldItems { folder: "derived_data".into(), days: 0 }).is_err());
+        let p = prepare(&env, Action::TrashOldItems { folder: "derived_data".into(), days: 30 }).unwrap();
+        assert_eq!(p.level, Level::Reversible);
+        assert!(p.preview.starts_with("1 éléments"), "{}", p.preview);
+        let done = execute(&env, &p, false).unwrap();
+        assert!(!dd.join("Old-abc").exists() && dd.join("New-def").exists());
+        assert!(env.trash().join("Old-abc/f").is_file());
+        undo(done.undo.as_ref().unwrap()).unwrap();
+        assert!(dd.join("Old-abc/f").is_file());
     }
 }

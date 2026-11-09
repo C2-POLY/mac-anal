@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::actions::Env;
 use crate::ai;
-use crate::launchd::{self, Agent};
+use crate::launchd::{self, Agent, Trigger};
 use crate::overview::Overview;
 
 /// Alerts kept: the oldest go first.
@@ -234,7 +234,7 @@ pub fn run_check() -> i32 {
 /// The launchd agent that runs `mac-anal check` every minute.
 fn checker() -> Result<Agent, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    Ok(Agent { name: "check".into(), program: vec![exe.display().to_string(), "check".into()], interval: 60 })
+    Ok(Agent { name: "check".into(), program: vec![exe.display().to_string(), "check".into()], trigger: Trigger::Every(60) })
 }
 
 /// Installs the checker while a rule is active, and removes it when none is. `launchctl` is
