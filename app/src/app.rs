@@ -4,6 +4,7 @@ use std::sync::mpsc::{self, Receiver};
 use egui::ThemePreference;
 
 use crate::actions::Env;
+use crate::journal::{self, Entry};
 use crate::assistant::Assistant;
 use crate::overview::Overview;
 use crate::settings::{Settings, Widget};
@@ -22,6 +23,10 @@ pub struct App {
     settings: Settings,
     settings_path: Option<PathBuf>,
     settings_error: Option<String>,
+    env: Option<Env>,
+    /// The journal as last read, with the generation it was read at.
+    journal: (u64, Vec<Entry>),
+    journal_error: Option<String>,
     /// `--screenshot <file>`: draw the sample data, save the window there, then quit.
     screenshot: Option<PathBuf>,
     frame: u32,
@@ -43,6 +48,7 @@ impl App {
             (Some(_), Err(_)) => Settings::default(),
             (None, _) => settings_path.as_deref().map(Settings::load).unwrap_or_default(),
         };
+        let env_kept = env.clone();
         let mut readings = None;
         if screenshot.is_none() {
             menubar::install(cc.egui_ctx.clone(), env.clone(), &settings);
@@ -53,7 +59,7 @@ impl App {
                 ctx.request_repaint();
                 menubar::post(o);
             });
-            if let Some(env) = env {
+            if let Some(env) = env.clone() {
                 menubar::watch_largest(env);
             }
             readings = Some(rx);
@@ -65,9 +71,51 @@ impl App {
             settings,
             settings_path,
             settings_error: None,
+            journal: (u64::MAX, Vec::new()),
+            journal_error: None,
+            env: env_kept,
             screenshot,
             frame: 0,
             shot_requested: false,
+        }
+    }
+
+    /// The last actions, newest first, with their effect and an undo for the reversible ones.
+    fn journal_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(24.0);
+        ui.heading("Journal");
+        ui.add_space(4.0);
+        let Some(env) = self.env.clone() else { return };
+        // MAC_ANAL_JOURNAL=1 shows invented entries in a screenshot; otherwise nothing is read then.
+        if self.screenshot.is_some() {
+            if self.journal.0 == u64::MAX {
+                self.journal = (0, if std::env::var("MAC_ANAL_JOURNAL").is_ok_and(|v| v == "1") { journal::sample() } else { Vec::new() });
+            }
+        } else if self.journal.0 != journal::generation() {
+            self.journal = (journal::generation(), journal::load(&env));
+        }
+        if self.journal.1.is_empty() {
+            ui.label(egui::RichText::new("Rien encore : les actions lancées depuis l'assistant ou la barre des menus s'inscriront ici.").weak());
+            return;
+        }
+        let mut undo = None;
+        for e in self.journal.1.iter().rev().take(20) {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(journal::date(e.at)).weak().monospace());
+                ui.label(egui::RichText::new(&e.title).strong());
+                ui.label(egui::RichText::new(e.origin.label()).small().weak());
+                if e.undo.is_some() && !e.undone && e.error.is_none() && ui.small_button("Annuler").clicked() {
+                    undo = Some(e.id);
+                }
+            });
+            ui.label(egui::RichText::new(e.effect()).weak());
+            ui.add_space(4.0);
+        }
+        if let Some(id) = undo {
+            self.journal_error = journal::undo(&env, id).err();
+        }
+        if let Some(e) = &self.journal_error {
+            ui.colored_label(ui.visuals().error_fg_color, e);
         }
     }
 
@@ -162,6 +210,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(root, |ui| {
             self.overview.show(ui);
             self.settings_ui(ui);
+            self.journal_ui(ui);
         });
         self.screenshot_step(&ctx);
     }

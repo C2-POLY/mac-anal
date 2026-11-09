@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// How much an action can change on the Mac.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +30,7 @@ impl Level {
 }
 
 /// An action as the AI writes it, before validation.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
     /// Send a folder directly under `~/Library/Caches` to the Trash.
@@ -91,12 +91,21 @@ pub struct Prepared {
 pub struct Done {
     pub summary: String,
     pub undo: Option<Undo>,
+    /// The journal entry that recorded it, when it went through the journal.
+    pub entry: Option<u64>,
 }
 
 /// Files moved by an action, to move back.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Undo {
     moves: Vec<(PathBuf, PathBuf)>,
+}
+
+impl Undo {
+    /// An undo that moves nothing, for invented journal entries.
+    pub fn none() -> Self {
+        Undo { moves: Vec::new() }
+    }
 }
 
 /// Checks an action against the Mac and describes what it will touch. Refuses anything outside its
@@ -167,7 +176,7 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
             let from = env.caches().join(name);
             let to = free_path(&env.trash(), name);
             move_to(&from, &to)?;
-            Ok(Done { summary: format!("{name} est dans la Corbeille."), undo: Some(Undo { moves: vec![(from, to)] }) })
+            Ok(Done { summary: format!("{name} est dans la Corbeille."), undo: Some(Undo { moves: vec![(from, to)] }), entry: None })
         }
         Action::QuitProcess { pid } => {
             // The PID may have been reused since the plan: check it is still the same process of the user.
@@ -179,14 +188,14 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
             if r != 0 {
                 return Err(format!("Le processus {pid} n'a pas pu être quitté : {}", std::io::Error::last_os_error()));
             }
-            Ok(Done { summary: format!("Le processus {pid} a reçu la demande de quitter."), undo: None })
+            Ok(Done { summary: format!("Le processus {pid} a reçu la demande de quitter."), undo: None, entry: None })
         }
         Action::DisableLoginItem { label } => {
             let file = format!("{label}.plist");
             let from = env.launch_agents().join(&file);
             let to = free_path(&env.disabled_items(), &file);
             move_to(&from, &to)?;
-            Ok(Done { summary: format!("{label} ne se lancera plus au démarrage."), undo: Some(Undo { moves: vec![(from, to)] }) })
+            Ok(Done { summary: format!("{label} ne se lancera plus au démarrage."), undo: Some(Undo { moves: vec![(from, to)] }), entry: None })
         }
     }
 }
@@ -214,7 +223,7 @@ fn move_to(from: &Path, to: &Path) -> Result<(), String> {
     if let Some(dir) = to.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{} : {e}", dir.display()))?;
     }
-    std::fs::rename(from, to).map_err(|e| format!("{} → {} : {e}", from.display(), to.display()))
+    std::fs::rename(from, to).map_err(|e| format!("{} vers {} : {e}", from.display(), to.display()))
 }
 
 /// `dir/name`, or `dir/name (mac-anal <seconds>)` when the name is taken.
