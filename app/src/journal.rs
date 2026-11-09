@@ -28,6 +28,8 @@ pub enum Origin {
     Assistant,
     /// The user, from a quick action of the menu bar.
     MenuBar,
+    /// The user, running a script the assistant wrote.
+    Script,
 }
 
 impl Origin {
@@ -35,6 +37,7 @@ impl Origin {
         match self {
             Origin::Assistant => "Assistant",
             Origin::MenuBar => "Barre des menus",
+            Origin::Script => "Script",
         }
     }
 }
@@ -54,7 +57,12 @@ pub struct Entry {
     pub at: u64,
     pub origin: Origin,
     pub title: String,
-    pub action: Action,
+    /// The catalog action, or none for a script.
+    #[serde(default)]
+    pub action: Option<Action>,
+    /// The script that ran, for a script entry.
+    #[serde(default)]
+    pub script: Option<String>,
     pub before: Measure,
     pub after: Measure,
     #[serde(default)]
@@ -76,7 +84,7 @@ impl Entry {
             let gained = a as i128 - b as i128;
             let size = format_bytes(gained.unsigned_abs() as u64);
             parts.push(if gained >= 0 { format!("espace libre +{size}") } else { format!("espace libre -{size}") });
-            if matches!(self.action, Action::ClearCache { .. }) {
+            if matches!(self.action, Some(Action::ClearCache { .. })) {
                 parts.push("la Corbeille garde la place tant qu'elle n'est pas vidée".into());
             }
         }
@@ -120,7 +128,7 @@ fn save(path: &Path, entries: &[Entry]) -> Result<(), String> {
     Ok(())
 }
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -142,7 +150,7 @@ pub fn run(env: &Env, origin: Origin, p: &Prepared, confirmed: bool) -> Result<D
         Ok(done) => (done.undo.clone(), None),
         Err(e) => (None, Some(e.clone())),
     };
-    entries.push(Entry { id, at: now(), origin, title: p.title.clone(), action: p.action.clone(), before, after, undo, undone: false, error });
+    entries.push(Entry { id, at: now(), origin, title: p.title.clone(), action: Some(p.action.clone()), script: None, before, after, undo, undone: false, error });
     let excess = entries.len().saturating_sub(KEEP);
     entries.drain(..excess);
     let saved = save(&path(env), &entries);
@@ -152,6 +160,26 @@ pub fn run(env: &Env, origin: Origin, p: &Prepared, confirmed: bool) -> Result<D
     }
     done.entry = Some(id);
     Ok(done)
+}
+
+/// Writes a real script run to the journal: scripts cannot be undone by mac-anal.
+pub fn record_script(env: &Env, purpose: &str, script: &str, run: &crate::scripts::Run) {
+    let _lock = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut entries = load(env);
+    let id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+    let after = Measure { free_disk: free_space(&env.home), target: match (run.timed_out, run.status) {
+        (true, _) => "arrêté au bout de 60 s".into(),
+        (false, Some(0)) => "terminé sans erreur".into(),
+        (false, Some(c)) => format!("code de sortie {c}"),
+        (false, None) => "interrompu".into(),
+    } };
+    let before = Measure { free_disk: None, target: "script lancé".into() };
+    entries.push(Entry { id, at: now(), origin: Origin::Script, title: purpose.to_string(), action: None, script: Some(script.to_string()), before, after, undo: None, undone: false, error: None });
+    let excess = entries.len().saturating_sub(KEEP);
+    entries.drain(..excess);
+    if let Err(e) = save(&path(env), &entries) {
+        eprintln!("journal: {e}");
+    }
 }
 
 /// Puts back what an entry did, and marks it undone.
@@ -247,7 +275,8 @@ pub fn sample() -> Vec<Entry> {
         at: at - ago,
         origin,
         title: title.into(),
-        action,
+        action: Some(action),
+        script: None,
         before: Measure { free_disk: Some(before.1), target: before.0.into() },
         after: Measure { free_disk: Some(after.1), target: after.0.into() },
         undo: undo.then(Undo::none),

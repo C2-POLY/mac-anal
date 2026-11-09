@@ -7,6 +7,8 @@ mod journal;
 mod menubar;
 mod metrics;
 mod overview;
+mod script_card;
+mod scripts;
 mod settings;
 
 use std::path::PathBuf;

@@ -11,6 +11,8 @@ use serde_json::Value;
 use crate::actions::{self, Action, Done, Env, Level, Prepared};
 use crate::ai;
 use crate::investigate::{self, Progress};
+use crate::script_card::ScriptCard;
+use crate::scripts;
 use crate::journal::{self, Origin};
 
 /// What the AI proposed, checked by the app.
@@ -44,11 +46,14 @@ pub struct Assistant {
     steps: Vec<(String, usize)>,
     plan: Option<Plan>,
     error: Option<String>,
+    /// A script being written by Claude: its purpose and code.
+    writing: Option<Receiver<Result<(String, String), String>>>,
+    script: Option<ScriptCard>,
 }
 
 impl Assistant {
     pub fn new(sample: bool) -> Self {
-        let mut a = Assistant { env: Env::current(), question: String::new(), pending: None, steps: Vec::new(), plan: None, error: None };
+        let mut a = Assistant { env: Env::current(), question: String::new(), pending: None, steps: Vec::new(), plan: None, error: None, writing: None, script: None };
         if sample {
             a.question = "Libère de la place sur mon disque".into();
             a.steps = vec![("Taille des dossiers de ~/Library/Caches".into(), 41), ("Processus les plus actifs".into(), 312)];
@@ -77,7 +82,49 @@ impl Assistant {
         self.error = None;
     }
 
+    /// Opens a kept script from the library in the card.
+    pub fn load_script(&mut self, saved: scripts::Saved) {
+        self.script = Some(ScriptCard::new(saved.purpose, saved.script, Some(saved.name)));
+    }
+
+    /// An invented script for the screenshot mode (`MAC_ANAL_SCRIPT=1`).
+    pub fn sample_script(&mut self) {
+        self.question = "Liste les dix plus gros fichiers de mes Téléchargements".into();
+        self.script = Some(ScriptCard::new(
+            "Lister les dix plus gros fichiers des Téléchargements".into(),
+            "# Les dix plus gros fichiers, du plus gros au plus petit\nfind ~/Downloads -type f -size +10M -print0 | xargs -0 du -h | sort -rh | head -10\n".into(),
+            None,
+        ));
+    }
+
+    fn write_script(&mut self, ctx: &egui::Context) {
+        let need = self.question.trim().to_string();
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(scripts::generate(&ai::command(), &need));
+            ctx.request_repaint();
+        });
+        self.writing = Some(rx);
+        self.script = None;
+        self.error = None;
+    }
+
     fn poll(&mut self) {
+        if let Some(rx) = &self.writing {
+            match rx.try_recv() {
+                Ok(Ok((purpose, script))) => {
+                    self.script = Some(ScriptCard::new(purpose, script, None));
+                    self.writing = None;
+                }
+                Ok(Err(e)) => {
+                    self.error = Some(e);
+                    self.writing = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => self.writing = None,
+            }
+        }
         let Some(rx) = &self.pending else { return };
         loop {
             match rx.try_recv() {
@@ -119,8 +166,16 @@ impl Assistant {
         ui.add_space(4.0);
         let busy = self.pending.is_some();
         ui.horizontal(|ui| {
-            if ui.add_enabled(!busy && !self.question.trim().is_empty(), egui::Button::new("Demander")).clicked() {
+            let ready = !busy && self.writing.is_none() && !self.question.trim().is_empty();
+            if ui.add_enabled(ready, egui::Button::new("Demander")).clicked() {
                 self.ask(ui.ctx());
+            }
+            if ui.add_enabled(ready, egui::Button::new("Écrire un script")).on_hover_text("Pour ce que les actions connues ne couvrent pas.").clicked() {
+                self.write_script(ui.ctx());
+            }
+            if self.writing.is_some() {
+                ui.spinner();
+                ui.label(RichText::new("Écriture du script…").weak());
             }
             if busy {
                 ui.spinner();
@@ -140,6 +195,19 @@ impl Assistant {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
         let env = self.env.clone();
+        if let Some(card) = &mut self.script {
+            ui.add_space(12.0);
+            let visuals = ui.visuals().clone();
+            Frame::new()
+                .fill(visuals.faint_bg_color)
+                .stroke(Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    card.show(ui, env.as_ref());
+                });
+        }
         let Some(plan) = &mut self.plan else { return };
         ui.add_space(12.0);
         ui.label(&plan.message);
