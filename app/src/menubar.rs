@@ -6,6 +6,7 @@
 //! without going through egui.
 
 use std::cell::RefCell;
+use std::sync::Mutex;
 
 use dispatch2::DispatchQueue;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -20,6 +21,15 @@ const OPEN: &str = "open";
 const QUIT: &str = "quit";
 const CLEAR: &str = "clear-largest";
 const UNDO: &str = "undo";
+const ALERT: &str = "alert";
+
+/// The alert the user clicked in a menu, for the window's assistant to explain.
+static EXPLAIN: Mutex<Option<String>> = Mutex::new(None);
+
+/// Takes the alert to explain, if one was clicked since.
+pub fn take_explain() -> Option<String> {
+    EXPLAIN.lock().ok()?.take()
+}
 
 /// The text a widget shows in the menu bar.
 pub fn title(w: Widget, o: &Overview) -> String {
@@ -67,6 +77,7 @@ struct Icon {
     widget: Widget,
     tray: TrayIcon,
     detail: MenuItem,
+    alerts: MenuItem,
     clear: MenuItem,
     undo: MenuItem,
 }
@@ -77,6 +88,8 @@ struct Bar {
     icons: Vec<Icon>,
     last: Overview,
     largest: Option<(String, u64)>,
+    /// The last alert of the surveillance rules, if any.
+    alert: Option<String>,
     /// The journal entry of the last quick action, to undo it.
     undo: Option<u64>,
     note: Option<String>,
@@ -93,7 +106,7 @@ pub fn install(ctx: egui::Context, env: Option<Env>, settings: &Settings) {
         DispatchQueue::main().exec_async(move || handle(&id));
     }));
     BAR.with(|b| {
-        *b.borrow_mut() = Some(Bar { ctx, env, icons: Vec::new(), last: Overview::default(), largest: None, undo: None, note: None });
+        *b.borrow_mut() = Some(Bar { ctx, env, icons: Vec::new(), last: Overview::default(), largest: None, alert: None, undo: None, note: None });
     });
     rebuild(settings);
 }
@@ -120,6 +133,8 @@ pub fn post(o: Overview) {
     DispatchQueue::main().exec_async(move || {
         with_bar(|bar| {
             bar.last = o;
+            // The alerts come from `mac-anal check`, a separate process: read them with each reading.
+            bar.alert = bar.env.as_ref().and_then(|env| crate::rules::alerts(env).pop()).map(|a| a.message);
             refresh(bar);
         })
     });
@@ -150,7 +165,7 @@ fn with_bar(f: impl FnOnce(&mut Bar)) {
 
 fn icon(w: Widget, bar: &Bar) -> Result<Icon, String> {
     let detail = MenuItem::new(detail(w, &bar.last), false, None);
-    let alerts = MenuItem::new("Aucune alerte", false, None);
+    let alerts = MenuItem::with_id(ALERT, "Aucune alerte", false, None);
     let clear = MenuItem::with_id(CLEAR, "Vider le plus gros cache", false, None);
     let undo = MenuItem::with_id(UNDO, "Annuler la dernière action", false, None);
     let open = MenuItem::with_id(OPEN, "Ouvrir mac-anal", true, None);
@@ -164,7 +179,7 @@ fn icon(w: Widget, bar: &Bar) -> Result<Icon, String> {
         .with_menu(Box::new(menu))
         .build()
         .map_err(|e| e.to_string())?;
-    Ok(Icon { widget: w, tray, detail, clear, undo })
+    Ok(Icon { widget: w, tray, detail, alerts, clear, undo })
 }
 
 fn refresh(bar: &Bar) {
@@ -176,6 +191,8 @@ fn refresh(bar: &Bar) {
     for i in &bar.icons {
         i.tray.set_title(Some(title(i.widget, &bar.last)));
         i.detail.set_text(detail(i.widget, &bar.last));
+        i.alerts.set_text(bar.alert.as_ref().map_or("Aucune alerte".to_string(), |a| format!("Expliquer l'alerte : {a}")));
+        i.alerts.set_enabled(bar.alert.is_some());
         i.clear.set_text(&clear_text);
         i.clear.set_enabled(bar.largest.is_some() && bar.env.is_some());
         i.undo.set_text(&undo_text);
@@ -186,6 +203,14 @@ fn refresh(bar: &Bar) {
 fn handle(id: &str) {
     with_bar(|bar| {
         match id {
+            ALERT => {
+                if let (Some(a), Ok(mut e)) = (bar.alert.clone(), EXPLAIN.lock()) {
+                    *e = Some(a);
+                }
+                bar.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                bar.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                bar.ctx.request_repaint();
+            }
             OPEN => {
                 bar.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 bar.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);

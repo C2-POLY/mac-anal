@@ -5,6 +5,7 @@ use egui::ThemePreference;
 
 use crate::actions::Env;
 use crate::journal::{self, Entry};
+use crate::rules::{self, Alert, Rule};
 use crate::assistant::Assistant;
 use crate::overview::Overview;
 use crate::settings::{Settings, Widget};
@@ -27,6 +28,13 @@ pub struct App {
     /// The journal as last read, with the generation it was read at.
     journal: (u64, Vec<Entry>),
     journal_error: Option<String>,
+    /// Surveillance: the sentence typed, Claude's proposal, the rules and alerts as last read.
+    watch_sentence: String,
+    watch_pending: Option<Receiver<Result<Rule, String>>>,
+    watch_proposal: Option<Rule>,
+    watch: (u64, Vec<Rule>, Vec<Alert>),
+    watch_read_at: Option<std::time::Instant>,
+    watch_error: Option<String>,
     /// The script library as last read, with the generation it was read at.
     library: (u64, Vec<crate::scripts::Saved>),
     /// `--screenshot <file>`: draw the sample data, save the window there, then quit.
@@ -79,6 +87,12 @@ impl App {
             settings_error: None,
             journal: (u64::MAX, Vec::new()),
             journal_error: None,
+            watch_sentence: String::new(),
+            watch_pending: None,
+            watch_proposal: None,
+            watch: (u64::MAX, Vec::new(), Vec::new()),
+            watch_read_at: None,
+            watch_error: None,
             library: (u64::MAX, Vec::new()),
             env: env_kept,
             screenshot,
@@ -131,6 +145,151 @@ impl App {
     }
 
     /// The last actions, newest first, with their effect and an undo for the reversible ones.
+    /// Rules stated in a sentence, checked every minute by `mac-anal check` from launchd.
+    fn surveillance_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(env) = self.env.clone() else { return };
+        let live = self.screenshot.is_none();
+        // Read again when the app changed the rules, and every few seconds for the alerts that
+        // `mac-anal check` writes from its own process.
+        if live {
+            let stale = self.watch_read_at.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(5));
+            if self.watch.0 != rules::generation() || stale {
+                self.watch = (rules::generation(), rules::rules(&env), rules::alerts(&env));
+                self.watch_read_at = Some(std::time::Instant::now());
+            }
+        } else if self.watch.0 == u64::MAX {
+            self.watch = (0, Vec::new(), Vec::new());
+            if std::env::var("MAC_ANAL_WATCH").is_ok_and(|v| v == "1") {
+                let (r, a, p) = rules::sample();
+                self.watch = (0, r, a);
+                self.watch_sentence = "préviens-moi si la mémoire dépasse 90 %".into();
+                self.watch_proposal = Some(p);
+            }
+        }
+        if let Some(rx) = &self.watch_pending {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(rule) => self.watch_proposal = Some(rule),
+                    Err(e) => self.watch_error = Some(e),
+                }
+                self.watch_pending = None;
+            }
+        }
+
+        ui.add_space(24.0);
+        ui.heading("Surveillance");
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Vérifiée chaque minute en arrière-plan par launchd, sans réseau ni IA, même mac-anal fermé.").weak());
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.watch_sentence).hint_text("Ex. : préviens-moi si le disque passe sous 10 %").desired_width(360.0));
+            let ready = self.watch_pending.is_none() && !self.watch_sentence.trim().is_empty();
+            if ui.add_enabled(ready, egui::Button::new("Créer la règle")).clicked() {
+                let (tx, rx) = mpsc::channel();
+                let sentence = self.watch_sentence.trim().to_string();
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let _ = tx.send(rules::from_sentence(&crate::ai::command(), &sentence));
+                    ctx.request_repaint();
+                });
+                self.watch_pending = Some(rx);
+                self.watch_error = None;
+            }
+            if self.watch_pending.is_some() {
+                ui.spinner();
+            }
+        });
+
+        let mut changed = false;
+        let mut save_proposal = false;
+        let mut drop_proposal = false;
+        if let Some(p) = &mut self.watch_proposal {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(format!("Règle proposée : {}", p.name)).strong());
+            ui.label(egui::RichText::new(p.condition()).weak());
+            ui.horizontal(|ui| {
+                ui.label("Seuil");
+                ui.add(egui::DragValue::new(&mut p.threshold).speed(0.5));
+                ui.label("toutes les");
+                ui.add(egui::DragValue::new(&mut p.every_minutes).range(1..=1440));
+                ui.label("min");
+                if ui.button("Enregistrer").clicked() {
+                    save_proposal = true;
+                }
+                if ui.button("Annuler").clicked() {
+                    drop_proposal = true;
+                }
+            });
+        }
+        if drop_proposal {
+            self.watch_proposal = None;
+        }
+        if save_proposal {
+            if let Some(p) = self.watch_proposal.take() {
+                match p.check().and_then(|p| rules::add(&env, p)) {
+                    Ok(_) => {
+                        self.watch_sentence.clear();
+                        changed = true;
+                    }
+                    Err(e) => self.watch_error = Some(e),
+                }
+            }
+        }
+
+        let mut remove = None;
+        let mut edited = false;
+        for r in &mut self.watch.1 {
+            ui.horizontal(|ui| {
+                let mut active = !r.paused;
+                if ui.checkbox(&mut active, "").on_hover_text("Active ou en pause").changed() {
+                    r.paused = !active;
+                    edited = true;
+                }
+                ui.label(egui::RichText::new(&r.name).strong());
+                ui.label(egui::RichText::new(r.condition()).weak());
+                if ui.add(egui::DragValue::new(&mut r.threshold).speed(0.5)).on_hover_text("Seuil").changed() {
+                    edited = true;
+                }
+                if ui.small_button("Supprimer").clicked() {
+                    remove = Some(r.id);
+                }
+            });
+        }
+        if live && (edited || remove.is_some()) {
+            let kept: Vec<Rule> = self.watch.1.iter().filter(|r| Some(r.id) != remove).cloned().collect();
+            if let Err(e) = kept.iter().cloned().map(Rule::check).collect::<Result<Vec<_>, _>>().and_then(|k| rules::save_rules(&env, &k)) {
+                self.watch_error = Some(e);
+            }
+            changed = true;
+        }
+        if live && changed {
+            if let Err(e) = rules::sync_agent(&env, crate::launchd::LAUNCHCTL) {
+                self.watch_error = Some(format!("launchd : {e}"));
+            }
+        }
+
+        if !self.watch.2.is_empty() {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Dernières alertes").strong());
+            let mut explain = None;
+            for a in self.watch.2.iter().rev().take(5) {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(journal::date(a.at)).weak().monospace());
+                    ui.label(&a.message);
+                    if ui.small_button("Expliquer").clicked() {
+                        explain = Some(a.message.clone());
+                    }
+                });
+            }
+            if let Some(m) = explain {
+                self.assistant.explain(ui.ctx(), format!("Explique cette alerte de surveillance et propose des actions : {m}"));
+            }
+        }
+        if let Some(e) = &self.watch_error {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+    }
+
     fn journal_ui(&mut self, ui: &mut egui::Ui) {
         ui.add_space(24.0);
         ui.heading("Journal");
@@ -252,16 +411,23 @@ impl eframe::App for App {
                 self.overview = o;
             }
         }
+        // An alert clicked in the menu bar: the assistant explains it.
+        if let Some(a) = menubar::take_explain() {
+            self.assistant.explain(&ctx, format!("Explique cette alerte de surveillance et propose des actions : {a}"));
+        }
         // With widgets in the menu bar, closing the window hides it; the menu quits.
         if ctx.input(|i| i.viewport().close_requested()) && menubar::active() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
         egui::CentralPanel::default().show(root, |ui| {
-            self.overview.show(ui);
-            self.settings_ui(ui);
-            self.scripts_ui(ui);
-            self.journal_ui(ui);
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                self.overview.show(ui);
+                self.settings_ui(ui);
+                self.surveillance_ui(ui);
+                self.scripts_ui(ui);
+                self.journal_ui(ui);
+            });
         });
         self.screenshot_step(&ctx);
     }

@@ -82,6 +82,12 @@ impl Assistant {
         self.error = None;
     }
 
+    /// Asks the assistant about `text` at once, as if typed (an alert to explain, for one).
+    pub fn explain(&mut self, ctx: &egui::Context, text: String) {
+        self.question = text;
+        self.ask(ctx);
+    }
+
     /// Opens a kept script from the library in the card.
     pub fn load_script(&mut self, saved: scripts::Saved) {
         self.script = Some(ScriptCard::new(saved.purpose, saved.script, Some(saved.name)));
