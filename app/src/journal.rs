@@ -32,6 +32,8 @@ pub enum Origin {
     Script,
     /// A scheduled task, run by launchd.
     Scheduled,
+    /// A client of `mac-anal mcp`, such as Claude Desktop or Claude Code.
+    Mcp,
 }
 
 impl Origin {
@@ -41,6 +43,7 @@ impl Origin {
             Origin::MenuBar => "Barre des menus",
             Origin::Script => "Script",
             Origin::Scheduled => "Tâche planifiée",
+            Origin::Mcp => "MCP",
         }
     }
 }

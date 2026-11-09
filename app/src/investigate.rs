@@ -235,9 +235,6 @@ pub fn schema(answer_only: bool) -> Value {
         req.extend_from_slice(required);
         json!({"type": "object", "properties": props, "required": req, "additionalProperties": false})
     };
-    let action = |k: &str, field: &str, ty: &str| {
-        json!({"type": "object", "properties": {"kind": {"const": k}, field: {"type": ty}}, "required": ["kind", field], "additionalProperties": false})
-    };
     let answer = json!({
         "type": "object",
         "properties": {"answer": {
@@ -245,12 +242,7 @@ pub fn schema(answer_only: bool) -> Value {
             "properties": {
                 "message": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "string"}},
-                "actions": {"type": "array", "items": {"anyOf": [
-                    action("clear_cache", "name", "string"),
-                    action("quit_process", "pid", "integer"),
-                    action("disable_login_item", "label", "string"),
-                    json!({"type": "object", "properties": {"kind": {"const": "trash_old_items"}, "folder": {"enum": ["derived_data", "caches", "downloads"]}, "days": {"type": "integer"}}, "required": ["kind", "folder", "days"], "additionalProperties": false}),
-                ]}}
+                "actions": {"type": "array", "items": crate::actions::json_schema()}
             },
             "required": ["message", "evidence", "actions"],
             "additionalProperties": false
