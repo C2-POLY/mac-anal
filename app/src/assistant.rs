@@ -1,19 +1,23 @@
-//! The Assistant panel: a question, the AI's plan of actions from the catalog, and for each one
-//! what it touches, its level, and Run / Confirm / Undo. The app runs the actions, never the AI.
+//! The Assistant panel: a question, the investigation's steps as they come, then the answer with
+//! its evidence and its plan of actions from the catalog, each with what it touches, its level, and
+//! Run / Confirm / Undo. The app runs the tools and the actions, never the AI.
 
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke};
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::actions::{self, Action, Done, Env, Level, Prepared, CATALOG};
+use crate::actions::{self, Action, Done, Env, Level, Prepared};
 use crate::ai;
+use crate::investigate::{self, Progress};
 use crate::journal::{self, Origin};
 
 /// What the AI proposed, checked by the app.
 pub struct Plan {
     pub message: String,
+    /// What the answer rests on: excerpts of tool outputs, names, sizes.
+    pub evidence: Vec<String>,
     pub items: Vec<Item>,
 }
 
@@ -35,16 +39,19 @@ pub enum State {
 pub struct Assistant {
     env: Option<Env>,
     question: String,
-    pending: Option<Receiver<Result<Plan, String>>>,
+    pending: Option<Receiver<Progress>>,
+    /// The investigation's steps: what was read, and how many lines.
+    steps: Vec<(String, usize)>,
     plan: Option<Plan>,
     error: Option<String>,
 }
 
 impl Assistant {
     pub fn new(sample: bool) -> Self {
-        let mut a = Assistant { env: Env::current(), question: String::new(), pending: None, plan: None, error: None };
+        let mut a = Assistant { env: Env::current(), question: String::new(), pending: None, steps: Vec::new(), plan: None, error: None };
         if sample {
             a.question = "Libère de la place sur mon disque".into();
+            a.steps = vec![("Taille des dossiers de ~/Library/Caches".into(), 41), ("Processus les plus actifs".into(), 312)];
             a.plan = Some(sample_plan());
         }
         a
@@ -59,30 +66,41 @@ impl Assistant {
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = ai::ask(&ai::command(), &request(&question, &context(&env))).and_then(|v| plan_from(&env, &v));
-            let _ = tx.send(result);
-            ctx.request_repaint();
+            investigate::investigate(&ai::command(), &env, &question, &context(&env), |p| {
+                let _ = tx.send(p);
+                ctx.request_repaint();
+            });
         });
         self.pending = Some(rx);
+        self.steps.clear();
         self.plan = None;
         self.error = None;
     }
 
     fn poll(&mut self) {
         let Some(rx) = &self.pending else { return };
-        match rx.try_recv() {
-            Ok(Ok(plan)) => {
-                self.plan = Some(plan);
-                self.pending = None;
-            }
-            Ok(Err(e)) => {
-                self.error = Some(e);
-                self.pending = None;
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.error = Some("L'analyse s'est arrêtée sans réponse.".into());
-                self.pending = None;
+        loop {
+            match rx.try_recv() {
+                Ok(Progress::Step { label, lines }) => self.steps.push((label, lines)),
+                Ok(Progress::Answer(v)) => {
+                    match self.env.as_ref().ok_or("Dossier personnel introuvable (HOME).".to_string()).and_then(|env| plan_from(env, &v)) {
+                        Ok(plan) => self.plan = Some(plan),
+                        Err(e) => self.error = Some(e),
+                    }
+                    self.pending = None;
+                    return;
+                }
+                Ok(Progress::Failed(e)) => {
+                    self.error = Some(e);
+                    self.pending = None;
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.error = Some("L'analyse s'est arrêtée sans réponse.".into());
+                    self.pending = None;
+                    return;
+                }
             }
         }
     }
@@ -106,9 +124,17 @@ impl Assistant {
             }
             if busy {
                 ui.spinner();
-                ui.label(RichText::new("Analyse en cours…").weak());
+                ui.label(RichText::new("Enquête en cours…").weak());
             }
         });
+        ui.label(RichText::new("Ce que l'assistant lit sur le Mac (processus, journaux, tailles) est envoyé à Claude.").small().weak());
+        if !self.steps.is_empty() {
+            ui.add_space(8.0);
+            ui.label(RichText::new("Enquête").strong());
+            for (label, lines) in &self.steps {
+                ui.label(RichText::new(format!("• {label} ({lines} lignes lues)")).weak());
+            }
+        }
         if let Some(e) = &self.error {
             ui.add_space(8.0);
             ui.colored_label(ui.visuals().error_fg_color, e);
@@ -117,6 +143,13 @@ impl Assistant {
         let Some(plan) = &mut self.plan else { return };
         ui.add_space(12.0);
         ui.label(&plan.message);
+        if !plan.evidence.is_empty() {
+            ui.add_space(4.0);
+            ui.label(RichText::new("Éléments relevés").strong());
+            for e in &plan.evidence {
+                ui.label(RichText::new(format!("• {e}")).weak());
+            }
+        }
         ui.add_space(8.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (i, item) in plan.items.iter_mut().enumerate() {
@@ -217,6 +250,7 @@ fn run(env: Option<&Env>, p: &Prepared, confirmed: bool) -> State {
 /// as refused, with why, and can never run.
 pub fn plan_from(env: &Env, v: &Value) -> Result<Plan, String> {
     let message = v.get("message").and_then(Value::as_str).unwrap_or_default().to_string();
+    let evidence = v.get("evidence").and_then(Value::as_array).map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect()).unwrap_or_default();
     let list = v.get("actions").and_then(Value::as_array).ok_or("La réponse ne contient pas de liste d'actions.")?;
     let items = list
         .iter()
@@ -227,40 +261,7 @@ pub fn plan_from(env: &Env, v: &Value) -> Result<Plan, String> {
             Item { proposal, state: State::Ready }
         })
         .collect();
-    Ok(Plan { message, items })
-}
-
-const SYSTEM: &str = "You are the assistant of mac-anal, an app that analyses the user's Mac. \
-You never run anything yourself: you answer with a short message in French and a list of actions \
-taken only from the catalog below. The app shows each action to the user, who decides to run it. \
-Only use names, labels and pids that appear in the context; never invent one. Prefer actions that \
-can be undone. When no action fits the question, return an empty list and explain why in the message.";
-
-/// The question with the catalog and what was read on the Mac.
-pub fn request(question: &str, context: &str) -> ai::Request {
-    let catalog: Vec<String> = CATALOG.iter().map(|(k, d)| format!("- {k}: {d}")).collect();
-    let prompt = format!("Catalog of actions:\n{}\n\nWhat mac-anal read on the Mac:\n{context}\n\nThe user asks: {question}", catalog.join("\n"));
-    ai::Request { system: SYSTEM.into(), prompt, schema: schema() }
-}
-
-/// One object per kind, with only its own field, so nothing else can slip in.
-pub fn schema() -> Value {
-    let kind = |k: &str, field: &str, ty: &str| {
-        json!({"type": "object", "properties": {"kind": {"const": k}, field: {"type": ty}}, "required": ["kind", field], "additionalProperties": false})
-    };
-    json!({
-        "type": "object",
-        "properties": {
-            "message": {"type": "string"},
-            "actions": {"type": "array", "items": {"anyOf": [
-                kind("clear_cache", "name", "string"),
-                kind("quit_process", "pid", "integer"),
-                kind("disable_login_item", "label", "string"),
-            ]}}
-        },
-        "required": ["message", "actions"],
-        "additionalProperties": false
-    })
+    Ok(Plan { message, evidence, items })
 }
 
 /// What the AI gets to see, read only: the biggest caches, the user's login items, the processes
@@ -316,6 +317,7 @@ fn sample_plan() -> Plan {
     let p = |action, level, title: &str, preview: &str| Prepared { action, level, title: title.into(), preview: preview.into() };
     Plan {
         message: "Trois pistes pour libérer de la place : un gros cache, un élément de démarrage inutile et un processus gourmand.".into(),
+        evidence: vec!["~/Library/Caches/com.example.music : 2,3 Go".into(), "Example Helper (4242) : 1,8 Go de mémoire".into()],
         items: vec![
             Item {
                 proposal: Ok(p(
@@ -352,6 +354,7 @@ fn sample_plan() -> Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_plan_keeps_refused_actions_apart() {
@@ -372,17 +375,16 @@ mod tests {
     }
 
     #[test]
-    fn the_schema_and_the_catalog_name_the_same_kinds() {
-        let s = schema();
-        let kinds: Vec<&str> = s["properties"]["actions"]["items"]["anyOf"]
+    fn the_answer_schema_and_the_catalog_name_the_same_kinds() {
+        let s = investigate::schema(true);
+        let kinds: Vec<&str> = s["properties"]["step"]["anyOf"][0]["properties"]["answer"]["properties"]["actions"]["items"]["anyOf"]
             .as_array()
             .unwrap()
             .iter()
             .map(|k| k["properties"]["kind"]["const"].as_str().unwrap())
             .collect();
-        let catalog: Vec<&str> = CATALOG.iter().map(|(k, _)| *k).collect();
+        let catalog: Vec<&str> = crate::actions::CATALOG.iter().map(|(k, _)| *k).collect();
         assert_eq!(kinds, catalog);
-        assert!(request("q", "ctx").prompt.contains("clear_cache"));
     }
 
     #[test]
@@ -393,12 +395,18 @@ mod tests {
         let script = dir.path().join("claude");
         std::fs::write(
             &script,
-            "#!/bin/sh\necho '{\"is_error\":false,\"structured_output\":{\"message\":\"Un cache\",\"actions\":[{\"kind\":\"clear_cache\",\"name\":\"com.example.app\"}]}}'\n",
+            "#!/bin/sh\necho '{\"is_error\":false,\"structured_output\":{\"step\":{\"answer\":{\"message\":\"Un cache\",\"evidence\":[\"2 Go\"],\"actions\":[{\"kind\":\"clear_cache\",\"name\":\"com.example.app\"}]}}}}'\n",
         )
         .unwrap();
         std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        let v = ai::ask(script.to_str().unwrap(), &request("place", &context(&env))).unwrap();
-        let plan = plan_from(&env, &v).unwrap();
+        let answer = std::sync::Mutex::new(None);
+        investigate::investigate(script.to_str().unwrap(), &env, "place", &context(&env), |p| {
+            if let Progress::Answer(v) = p {
+                *answer.lock().unwrap() = Some(v);
+            }
+        });
+        let plan = plan_from(&env, &answer.into_inner().unwrap().unwrap()).unwrap();
+        assert_eq!(plan.evidence, vec!["2 Go".to_string()]);
         let p = plan.items[0].proposal.as_ref().unwrap();
         let done = actions::execute(&env, p, false).unwrap();
         assert!(!env.caches().join("com.example.app").exists());
