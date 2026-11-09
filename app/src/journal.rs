@@ -30,6 +30,8 @@ pub enum Origin {
     MenuBar,
     /// The user, running a script the assistant wrote.
     Script,
+    /// A scheduled task, run by launchd.
+    Scheduled,
 }
 
 impl Origin {
@@ -38,6 +40,7 @@ impl Origin {
             Origin::Assistant => "Assistant",
             Origin::MenuBar => "Barre des menus",
             Origin::Script => "Script",
+            Origin::Scheduled => "Tâche planifiée",
         }
     }
 }
@@ -163,7 +166,7 @@ pub fn run(env: &Env, origin: Origin, p: &Prepared, confirmed: bool) -> Result<D
 }
 
 /// Writes a real script run to the journal: scripts cannot be undone by mac-anal.
-pub fn record_script(env: &Env, purpose: &str, script: &str, run: &crate::scripts::Run) {
+pub fn record_script(env: &Env, origin: Origin, purpose: &str, script: &str, run: &crate::scripts::Run) {
     let _lock = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut entries = load(env);
     let id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
@@ -174,7 +177,7 @@ pub fn record_script(env: &Env, purpose: &str, script: &str, run: &crate::script
         (false, None) => "interrompu".into(),
     } };
     let before = Measure { free_disk: None, target: "script lancé".into() };
-    entries.push(Entry { id, at: now(), origin: Origin::Script, title: purpose.to_string(), action: None, script: Some(script.to_string()), before, after, undo: None, undone: false, error: None });
+    entries.push(Entry { id, at: now(), origin, title: purpose.to_string(), action: None, script: Some(script.to_string()), before, after, undo: None, undone: false, error: None });
     let excess = entries.len().saturating_sub(KEEP);
     entries.drain(..excess);
     if let Err(e) = save(&path(env), &entries) {
@@ -233,6 +236,10 @@ fn measure(env: &Env, action: &Action) -> Measure {
                 "processus terminé".into()
             }
         }
+        Action::TrashOldItems { folder, days } => match env.old_folder(folder) {
+            Some(dir) => format!("{} éléments de plus de {days} jours", actions::old_items(&dir, *days).len()),
+            None => "dossier inconnu".into(),
+        },
         Action::DisableLoginItem { label } => {
             if env.launch_agents().join(format!("{label}.plist")).is_file() {
                 "lancé au démarrage".into()

@@ -12,6 +12,7 @@ mod rules;
 mod script_card;
 mod scripts;
 mod settings;
+mod tasks;
 
 use std::path::PathBuf;
 
@@ -19,6 +20,10 @@ fn main() -> eframe::Result<()> {
     // `mac-anal check`, run by launchd: the surveillance rules, without the window.
     if std::env::args().nth(1).as_deref() == Some("check") {
         std::process::exit(rules::run_check());
+    }
+    // `mac-anal run-task <id>`, run by launchd at a scheduled task's time.
+    if std::env::args().nth(1).as_deref() == Some("run-task") {
+        std::process::exit(tasks::run_task_command(std::env::args().nth(2).as_deref()));
     }
     let mut screenshot: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);

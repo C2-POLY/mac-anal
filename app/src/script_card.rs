@@ -54,7 +54,7 @@ impl ScriptCard {
             Ok(run) if dry => Stage::Tried(run),
             Ok(run) => {
                 if let Some(env) = env {
-                    journal::record_script(env, &self.purpose, &self.script, &run);
+                    journal::record_script(env, journal::Origin::Script, &self.purpose, &self.script, &run);
                 }
                 Stage::Ran(run)
             }
