@@ -320,12 +320,18 @@ fn run(env: Option<&Env>, p: &Prepared, confirmed: bool) -> State {
     }
 }
 
+/// The most actions one plan may hold, so a runaway answer cannot bury the user in cards.
+pub const MAX_ACTIONS: usize = 10;
+
 /// The AI's answer turned into a plan: an unknown action, or one that fails its checks, is kept
 /// as refused, with why, and can never run.
 pub fn plan_from(env: &Env, v: &Value) -> Result<Plan, String> {
-    let message = v.get("message").and_then(Value::as_str).unwrap_or_default().to_string();
+    let message = v.get("message").and_then(Value::as_str).filter(|m| !m.trim().is_empty()).ok_or("La réponse ne contient pas de message.")?.to_string();
     let evidence = v.get("evidence").and_then(Value::as_array).map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect()).unwrap_or_default();
     let list = v.get("actions").and_then(Value::as_array).ok_or("La réponse ne contient pas de liste d'actions.")?;
+    if list.len() > MAX_ACTIONS {
+        return Err(format!("La réponse propose {} actions, au plus {MAX_ACTIONS}.", list.len()));
+    }
     let items = list
         .iter()
         .map(|raw| {
@@ -446,6 +452,19 @@ mod tests {
         assert!(plan.items[1].proposal.is_err());
         assert!(plan.items[2].proposal.is_err());
         assert!(plan_from(&env, &json!({"message": "m"})).is_err());
+    }
+
+    #[test]
+    fn a_plan_needs_a_message_and_stays_short() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Env { home: dir.path().to_path_buf() };
+        assert!(plan_from(&env, &json!({"actions": []})).is_err());
+        assert!(plan_from(&env, &json!({"message": "  ", "actions": []})).is_err());
+        let action = json!({"kind": "clear_cache", "name": "c"});
+        assert!(plan_from(&env, &json!({"message": "m", "actions": vec![action.clone(); MAX_ACTIONS]})).is_ok());
+        assert!(plan_from(&env, &json!({"message": "m", "actions": vec![action; MAX_ACTIONS + 1]})).is_err());
+        let with_level = json!({"message": "m", "actions": [{"kind": "clear_cache", "name": "c", "level": "read"}]});
+        assert!(plan_from(&env, &with_level).unwrap().items[0].proposal.is_err());
     }
 
     #[test]
