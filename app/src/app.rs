@@ -27,6 +27,8 @@ pub struct App {
     /// The journal as last read, with the generation it was read at.
     journal: (u64, Vec<Entry>),
     journal_error: Option<String>,
+    /// The script library as last read, with the generation it was read at.
+    library: (u64, Vec<crate::scripts::Saved>),
     /// `--screenshot <file>`: draw the sample data, save the window there, then quit.
     screenshot: Option<PathBuf>,
     frame: u32,
@@ -64,19 +66,67 @@ impl App {
             }
             readings = Some(rx);
         }
+        let mut assistant = Assistant::new(sample_plan);
+        if screenshot.is_some() && std::env::var("MAC_ANAL_SCRIPT").is_ok_and(|v| v == "1") {
+            assistant.sample_script();
+        }
         Self {
             overview,
-            assistant: Assistant::new(sample_plan),
+            assistant,
             readings,
             settings,
             settings_path,
             settings_error: None,
             journal: (u64::MAX, Vec::new()),
             journal_error: None,
+            library: (u64::MAX, Vec::new()),
             env: env_kept,
             screenshot,
             frame: 0,
             shot_requested: false,
+        }
+    }
+
+    /// The kept scripts: open one in the assistant to read it or run it again, or remove it.
+    fn scripts_ui(&mut self, ui: &mut egui::Ui) {
+        use crate::scripts;
+        let Some(env) = self.env.clone() else { return };
+        if self.screenshot.is_some() {
+            if self.library.0 == u64::MAX {
+                let sample = std::env::var("MAC_ANAL_SCRIPT").is_ok_and(|v| v == "1");
+                let saved = |name: &str, purpose: &str| scripts::Saved { name: name.into(), purpose: purpose.into(), script: String::new(), created: 0 };
+                self.library = (0, if sample { vec![saved("lister-gros-fichiers", "Lister les gros fichiers des Téléchargements"), saved("taille-xcode", "Mesurer les données de Xcode")] } else { Vec::new() });
+            }
+        } else if self.library.0 != scripts::generation() {
+            self.library = (scripts::generation(), scripts::list(&env));
+        }
+        ui.add_space(24.0);
+        ui.heading("Scripts");
+        ui.add_space(4.0);
+        if self.library.1.is_empty() {
+            ui.label(egui::RichText::new("Aucun script enregistré : « Écrire un script » dans l'assistant, puis « Enregistrer ».").weak());
+            return;
+        }
+        let mut open = None;
+        let mut remove = None;
+        for s in &self.library.1 {
+            ui.horizontal(|ui| {
+                ui.label(&s.purpose);
+                if ui.small_button("Ouvrir").on_hover_text("Le relire, l'essayer à blanc ou le relancer").clicked() {
+                    open = Some(s.clone());
+                }
+                if ui.small_button("Supprimer").on_hover_text("Il part dans la Corbeille").clicked() {
+                    remove = Some(s.name.clone());
+                }
+            });
+        }
+        if let Some(s) = open {
+            self.assistant.load_script(s);
+        }
+        if let Some(name) = remove {
+            if let Err(e) = scripts::delete(&env, &name) {
+                self.journal_error = Some(e);
+            }
         }
     }
 
@@ -210,6 +260,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(root, |ui| {
             self.overview.show(ui);
             self.settings_ui(ui);
+            self.scripts_ui(ui);
             self.journal_ui(ui);
         });
         self.screenshot_step(&ctx);
