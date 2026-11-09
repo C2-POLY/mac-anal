@@ -13,3 +13,6 @@
 
 # oh-my-claudecode runtime state
 .omc/
+
+# Rust build output
+/app/target/
