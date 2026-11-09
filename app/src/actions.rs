@@ -169,7 +169,7 @@ pub fn prepare(env: &Env, action: Action) -> Result<Prepared, String> {
         Action::QuitProcess { pid } => {
             let pid = *pid;
             if pid <= 1 || pid == std::process::id() {
-                return Err(format!("Le processus {pid} ne peut pas être quitté par mac-anal."));
+                return Err(format!("Le processus {pid} ne peut pas être quitté par Mac Anal."));
             }
             let (user, name) = process_owner_and_name(pid).ok_or_else(|| format!("Aucun processus {pid}."))?;
             if Some(user.as_str()) != current_user().as_deref() {
