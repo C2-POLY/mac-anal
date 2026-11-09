@@ -150,8 +150,11 @@ pub fn prepare(env: &Env, action: Action) -> Result<Prepared, String> {
         Action::ClearCache { name } => {
             plain_name(name)?;
             let dir = env.caches().join(name);
-            if !dir.is_dir() {
-                return Err(format!("Le cache « {name} » n'existe pas."));
+            // A link would be measured through its target: only a real folder is a cache.
+            match std::fs::symlink_metadata(&dir) {
+                Ok(m) if m.is_dir() => {}
+                Ok(_) => return Err(format!("« {name} » n'est pas un dossier de cache.")),
+                Err(_) => return Err(format!("Le cache « {name} » n'existe pas.")),
             }
             let (bytes, files) = folder_size(&dir);
             Ok(Prepared {
@@ -168,7 +171,8 @@ pub fn prepare(env: &Env, action: Action) -> Result<Prepared, String> {
         }
         Action::QuitProcess { pid } => {
             let pid = *pid;
-            if pid <= 1 || pid == std::process::id() {
+            // Above i32::MAX the PID would turn negative as a pid_t, and kill() would signal a group.
+            if pid <= 1 || libc::pid_t::try_from(pid).is_err() || pid == std::process::id() {
                 return Err(format!("Le processus {pid} ne peut pas être quitté par Mac Anal."));
             }
             let (user, name) = process_owner_and_name(pid).ok_or_else(|| format!("Aucun processus {pid}."))?;
@@ -251,8 +255,10 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
             if prepare(env, prepared.action.clone()).map(|now| now.title) != Ok(prepared.title.clone()) {
                 return Err(format!("Le processus {pid} n'est plus celui proposé : rien n'a été fait."));
             }
-            // SAFETY: kill only sends a signal; prepare() refused launchd, mac-anal and other users' processes.
-            let r = unsafe { libc::kill(*pid as libc::pid_t, libc::SIGTERM) };
+            let raw = libc::pid_t::try_from(*pid).map_err(|_| format!("Le processus {pid} ne peut pas être quitté par Mac Anal."))?;
+            // SAFETY: kill only sends a signal; prepare() refused launchd, mac-anal, other users'
+            // processes and any PID that is not positive as a pid_t.
+            let r = unsafe { libc::kill(raw, libc::SIGTERM) };
             if r != 0 {
                 return Err(format!("Le processus {pid} n'a pas pu être quitté : {}", std::io::Error::last_os_error()));
             }
@@ -285,12 +291,19 @@ pub fn execute(env: &Env, prepared: &Prepared, confirmed: bool) -> Result<Done, 
     }
 }
 
-/// Moves back what an action moved. Refuses to overwrite something that took its place since.
+/// Moves back what an action moved. Checks every move first, so it either puts everything back or
+/// touches nothing: it refuses to overwrite what took a place since, and says when something is
+/// gone (the Trash was emptied).
 pub fn undo(undo: &Undo) -> Result<(), String> {
-    for (original, moved) in undo.moves.iter().rev() {
-        if original.exists() {
+    for (original, moved) in &undo.moves {
+        if std::fs::symlink_metadata(original).is_ok() {
             return Err(format!("{} existe de nouveau : rien n'a été remis.", original.display()));
         }
+        if std::fs::symlink_metadata(moved).is_err() {
+            return Err(format!("{} a disparu (Corbeille vidée ?) : rien n'a été remis.", moved.display()));
+        }
+    }
+    for (original, moved) in undo.moves.iter().rev() {
         move_to(moved, original)?;
     }
     Ok(())
@@ -469,6 +482,67 @@ mod tests {
         execute(&env, &p, true).unwrap();
         let status = child.wait().unwrap();
         assert!(!status.success());
+    }
+
+    #[test]
+    fn pids_out_of_range_are_refused_before_any_call() {
+        let (_d, env) = home();
+        for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX] {
+            let e = prepare(&env, Action::QuitProcess { pid }).unwrap_err();
+            assert!(e.contains("ne peut pas être quitté"), "{pid}: {e}");
+        }
+        for bad in [r#"{"kind":"quit_process","pid":"42"}"#, r#"{"kind":"quit_process","pid":-5}"#, r#"{"kind":"quit_process","pid":4.5}"#] {
+            assert!(serde_json::from_str::<Action>(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_ai_cannot_choose_the_level() {
+        assert!(serde_json::from_str::<Action>(r#"{"kind":"quit_process","pid":42,"level":"reversible"}"#).is_err());
+        assert!(serde_json::from_str::<Action>(r#"{"kind":"clear_cache","name":"c","level":"read"}"#).is_err());
+    }
+
+    #[test]
+    fn a_process_gone_since_the_preview_is_not_signalled() {
+        let (_d, env) = home();
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let p = prepare(&env, Action::QuitProcess { pid: child.id() }).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let e = execute(&env, &p, true).unwrap_err();
+        assert!(e.contains("n'est plus celui proposé"), "{e}");
+    }
+
+    #[test]
+    fn a_cache_must_be_a_real_folder() {
+        let (d, env) = home();
+        std::fs::create_dir_all(env.caches()).unwrap();
+        let outside = d.path().join("Documents");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, env.caches().join("link")).unwrap();
+        std::fs::write(env.caches().join("file"), "x").unwrap();
+        assert!(prepare(&env, Action::ClearCache { name: "link".into() }).is_err());
+        assert!(prepare(&env, Action::ClearCache { name: "file".into() }).is_err());
+        assert!(prepare(&env, Action::ClearCache { name: "a\0b".into() }).is_err());
+        assert!(prepare(&env, Action::DisableLoginItem { label: "a\0b".into() }).is_err());
+        assert!(outside.is_dir() && env.caches().join("link").exists());
+    }
+
+    #[test]
+    fn undo_after_the_trash_was_emptied_touches_nothing() {
+        let (_d, env) = home();
+        let dd = env.old_folder("derived_data").unwrap();
+        let old = SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+        for name in ["A", "B"] {
+            std::fs::create_dir_all(dd.join(name)).unwrap();
+            std::fs::File::open(dd.join(name)).unwrap().set_modified(old).unwrap();
+        }
+        let p = prepare(&env, Action::TrashOldItems { folder: "derived_data".into(), days: 30 }).unwrap();
+        let done = execute(&env, &p, false).unwrap();
+        std::fs::remove_dir(env.trash().join("B")).unwrap();
+        let e = undo(done.undo.as_ref().unwrap()).unwrap_err();
+        assert!(e.contains("Corbeille vidée"), "{e}");
+        assert!(!dd.join("A").exists() && env.trash().join("A").is_dir(), "a partial undo ran");
     }
 
     #[test]
