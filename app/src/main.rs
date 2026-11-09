@@ -2,7 +2,10 @@ mod actions;
 mod ai;
 mod app;
 mod assistant;
+mod menubar;
+mod metrics;
 mod overview;
+mod settings;
 
 use std::path::PathBuf;
 
