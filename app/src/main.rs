@@ -5,6 +5,7 @@ mod assistant;
 mod investigate;
 mod journal;
 mod launchd;
+mod mcp;
 mod menubar;
 mod metrics;
 mod overview;
@@ -20,6 +21,10 @@ fn main() -> eframe::Result<()> {
     // `mac-anal check`, run by launchd: the surveillance rules, without the window.
     if std::env::args().nth(1).as_deref() == Some("check") {
         std::process::exit(rules::run_check());
+    }
+    // `mac-anal mcp`: the MCP server on stdio, for Claude Desktop and Claude Code.
+    if std::env::args().nth(1).as_deref() == Some("mcp") {
+        std::process::exit(mcp::serve());
     }
     // `mac-anal run-task <id>`, run by launchd at a scheduled task's time.
     if std::env::args().nth(1).as_deref() == Some("run-task") {

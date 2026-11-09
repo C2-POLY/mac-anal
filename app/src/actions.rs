@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 /// How much an action can change on the Mac.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +52,26 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("disable_login_item", "label: a user LaunchAgent, ~/Library/LaunchAgents/<label>.plist (set aside, can be undone)"),
     ("trash_old_items", "folder: derived_data (Xcode), caches or downloads; days: unchanged for at least that many days (Trash, can be undone)"),
 ];
+
+/// The JSON schema of one action, one object per kind with only its own fields, for Claude's
+/// answers and the MCP server. Its kinds follow `CATALOG`.
+pub fn json_schema() -> Value {
+    let kind = |k: &str, props: Value, required: &[&str]| {
+        let mut p = json!({"kind": {"const": k}});
+        for (key, v) in props.as_object().into_iter().flatten() {
+            p[key] = v.clone();
+        }
+        let mut r = vec!["kind"];
+        r.extend_from_slice(required);
+        json!({"type": "object", "properties": p, "required": r, "additionalProperties": false})
+    };
+    json!({"anyOf": [
+        kind("clear_cache", json!({"name": {"type": "string"}}), &["name"]),
+        kind("quit_process", json!({"pid": {"type": "integer"}}), &["pid"]),
+        kind("disable_login_item", json!({"label": {"type": "string"}}), &["label"]),
+        kind("trash_old_items", json!({"folder": {"enum": ["derived_data", "caches", "downloads"]}, "days": {"type": "integer"}}), &["folder", "days"]),
+    ]})
+}
 
 /// Where the actions read and write: the user's home, replaced by a temporary folder in tests.
 #[derive(Clone, Debug)]

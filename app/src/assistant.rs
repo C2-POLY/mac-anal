@@ -340,7 +340,7 @@ pub fn plan_from(env: &Env, v: &Value) -> Result<Plan, String> {
 
 /// What the AI gets to see, read only: the biggest caches, the user's login items, the processes
 /// using the most memory.
-fn context(env: &Env) -> String {
+pub fn context(env: &Env) -> String {
     let mut out = String::new();
     let mut caches: Vec<(String, u64)> = std::fs::read_dir(env.caches())
         .into_iter()
