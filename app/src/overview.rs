@@ -1,7 +1,7 @@
 use egui::{CornerRadius, Frame, Margin, RichText, Stroke};
 
-/// What the overview shows. Every measure is `None` until the analysis exists.
-#[derive(Default)]
+/// What the overview shows. Every measure is `None` until it has been read.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Overview {
     pub disk: Option<Usage>,
     pub memory: Option<Usage>,
@@ -9,7 +9,7 @@ pub struct Overview {
 }
 
 /// Bytes used out of a total.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Usage {
     pub used: u64,
     pub total: u64,
