@@ -38,7 +38,32 @@ const WAITING: &str = "…";
 /// Processes listed in the processor and memory menus.
 const TOP: usize = 3;
 
-/// The text a widget shows in the menu bar.
+/// The glyph of a widget, a PNG drawn from `assets/menubar/<name>.svg` (see the
+/// `menubar_glyphs_are_current` test). Black on transparent: macOS tints it as a template image.
+/// All are 20 × 22 points at 2×, the height of the menu bar, so every glyph sits in the same box
+/// and lines up with the text beside it; the last 2 points are empty, a gap before the text.
+pub fn glyph(w: Widget, s: &Snapshot) -> &'static [u8] {
+    match w {
+        Widget::Disk => include_bytes!("../assets/menubar/disk.png"),
+        Widget::Memory => include_bytes!("../assets/menubar/memory.png"),
+        Widget::Cpu => include_bytes!("../assets/menubar/cpu.png"),
+        Widget::Gpu => include_bytes!("../assets/menubar/gpu.png"),
+        Widget::Network => include_bytes!("../assets/menubar/network.png"),
+        Widget::Temperature => include_bytes!("../assets/menubar/temperature.png"),
+        Widget::Fan => include_bytes!("../assets/menubar/fan.png"),
+        Widget::Battery if s.sensors.battery.as_ref().is_some_and(|b| b.charging) => include_bytes!("../assets/menubar/battery-charging.png"),
+        Widget::Battery => include_bytes!("../assets/menubar/battery.png"),
+        Widget::Swap => include_bytes!("../assets/menubar/swap.png"),
+    }
+}
+
+fn image(png: &[u8]) -> Result<tray_icon::Icon, String> {
+    let img = image::load_from_memory_with_format(png, image::ImageFormat::Png).map_err(|e| e.to_string())?.into_rgba8();
+    let (w, h) = img.dimensions();
+    tray_icon::Icon::from_rgba(img.into_raw(), w, h).map_err(|e| e.to_string())
+}
+
+/// The text a widget shows in the menu bar, beside its glyph.
 pub fn title(w: Widget, s: &Snapshot) -> String {
     let o = &s.overview;
     let value = match w {
@@ -52,21 +77,10 @@ pub fn title(w: Widget, s: &Snapshot) -> String {
         }),
         Widget::Temperature => s.sensors.temperatures.first().map(|(_, t)| format!("{} °C", decimal(*t as f64, 0))),
         Widget::Fan => s.sensors.fans.first().map(|f| format!("{} tr/min", decimal(f.rpm as f64, 0))),
-        Widget::Battery => s.sensors.battery.as_ref().map(|b| format!("{}{}", percent(b.charge), if b.charging { " ⚡" } else { "" })),
+        Widget::Battery => s.sensors.battery.as_ref().map(|b| percent(b.charge)),
         Widget::Swap => s.memory.as_ref().map(|m| format_bytes(m.swap_used)),
     };
-    let icon = match w {
-        Widget::Disk => "💾",
-        Widget::Memory => "🧠",
-        Widget::Cpu => "⚡",
-        Widget::Gpu => "🎮",
-        Widget::Network => "🌐",
-        Widget::Temperature => "🌡",
-        Widget::Fan => "🌀",
-        Widget::Battery => "🔋",
-        Widget::Swap => "🔄",
-    };
-    format!("{icon} {}", value.as_deref().unwrap_or(WAITING))
+    value.unwrap_or_else(|| WAITING.to_string())
 }
 
 /// The lines at the top of a widget's menu: a summary, then the detail of the measure.
@@ -231,6 +245,8 @@ pub fn quick(env: &Env, action: Action) -> Result<Prepared, String> {
 struct Icon {
     widget: Widget,
     tray: TrayIcon,
+    /// The glyph on screen, to change it only when it differs (the battery, once it charges).
+    glyph: &'static [u8],
     menu: Menu,
     /// The detail lines at the top of the menu, as many as the last reading had.
     lines: Vec<MenuItem>,
@@ -330,13 +346,15 @@ fn icon(w: Widget, bar: &Bar) -> Result<Icon, String> {
     let menu = Menu::new();
     let sep = PredefinedMenuItem::separator;
     menu.append_items(&[&sep(), &alerts, &sep(), &clear, &undo, &sep(), &open, &quit]).map_err(|e| e.to_string())?;
+    let glyph = glyph(w, &bar.last);
     let tray = TrayIconBuilder::new()
+        .with_icon_templated(image(glyph)?)
         .with_title(title(w, &bar.last))
         .with_tooltip(format!("Mac Anal : {}", w.name()))
         .with_menu(Box::new(menu.clone()))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut icon = Icon { widget: w, tray, menu, lines: Vec::new(), alerts, clear, undo };
+    let mut icon = Icon { widget: w, tray, glyph, menu, lines: Vec::new(), alerts, clear, undo };
     set_lines(&mut icon, &detail(w, &bar.last));
     Ok(icon)
 }
@@ -371,6 +389,13 @@ fn refresh(bar: &mut Bar) {
     let last = &bar.last;
     for i in &mut bar.icons {
         i.tray.set_title(Some(title(i.widget, last)));
+        let glyph = glyph(i.widget, last);
+        if !std::ptr::eq(glyph, i.glyph) {
+            if let Ok(img) = image(glyph) {
+                let _ = i.tray.set_icon_templated(Some(img));
+                i.glyph = glyph;
+            }
+        }
         set_lines(i, &detail(i.widget, last));
         i.alerts.set_text(bar.alert.as_ref().map_or("Aucune alerte".to_string(), |a| format!("Expliquer l'alerte : {a}")));
         i.alerts.set_enabled(bar.alert.is_some());
@@ -450,18 +475,67 @@ mod tests {
             memory: Some(Usage { used: 11 * GB, total: 16 * GB }),
             cpu: Some(0.234),
         };
-        assert_eq!(title(Widget::Disk, &s), "💾 182 Go");
-        assert_eq!(title(Widget::Memory, &s), "🧠 69 %");
-        assert_eq!(title(Widget::Cpu, &s), "⚡ 23 %");
-        assert_eq!(title(Widget::Gpu, &s), "🎮 31 %");
-        assert_eq!(title(Widget::Network, &s), "🌐 ↓2,4 Mo/s ↑319 Ko/s");
-        assert_eq!(title(Widget::Temperature, &s), "🌡 58 °C");
-        assert_eq!(title(Widget::Fan, &s), "🌀 1210 tr/min");
-        assert_eq!(title(Widget::Battery, &s), "🔋 82 % ⚡");
-        assert_eq!(title(Widget::Swap, &s), "🔄 1,2 Go");
+        assert_eq!(title(Widget::Disk, &s), "182 Go");
+        assert_eq!(title(Widget::Memory, &s), "69 %");
+        assert_eq!(title(Widget::Cpu, &s), "23 %");
+        assert_eq!(title(Widget::Gpu, &s), "31 %");
+        assert_eq!(title(Widget::Network, &s), "↓2,4 Mo/s ↑319 Ko/s");
+        assert_eq!(title(Widget::Temperature, &s), "58 °C");
+        assert_eq!(title(Widget::Fan, &s), "1210 tr/min");
+        assert_eq!(title(Widget::Battery, &s), "82 %");
+        assert_eq!(title(Widget::Swap, &s), "1,2 Go");
         let empty = Snapshot::default();
         for w in Widget::ALL {
-            assert_eq!(title(w, &empty), format!("{} …", title(w, &s).split(' ').next().unwrap()), "{w:?}");
+            assert_eq!(title(w, &empty), "…", "{w:?}");
+        }
+    }
+
+    /// The size of every glyph, in pixels.
+    const GLYPH: (u32, u32) = (40, 44);
+    /// The names of the glyph files, the battery's two states included.
+    const GLYPHS: [&str; 10] = ["disk", "memory", "cpu", "gpu", "network", "temperature", "fan", "battery", "battery-charging", "swap"];
+
+    #[test]
+    fn every_widget_has_a_glyph_of_the_same_size() {
+        let s = Snapshot::sample();
+        let mut seen = Vec::new();
+        for w in Widget::ALL {
+            let png = glyph(w, &s);
+            let img = image::load_from_memory_with_format(png, image::ImageFormat::Png).unwrap().into_rgba8();
+            // One box for all, so they line up; a template image is black, its shape in the alpha.
+            assert_eq!(img.dimensions(), GLYPH, "{w:?}");
+            assert!(img.pixels().all(|p| p.0[..3] == [0, 0, 0]), "{w:?}");
+            let inked: Vec<u32> = img.enumerate_pixels().filter(|(_, _, p)| p.0[3] > 0).map(|(_, y, _)| y).collect();
+            assert!(!inked.is_empty(), "{w:?}");
+            // Drawn around the middle of the box: the glyphs share one centre line.
+            let (top, bottom) = (*inked.iter().min().unwrap(), *inked.iter().max().unwrap());
+            assert!((top + bottom).abs_diff(GLYPH.1) <= 4, "{w:?}: {top} to {bottom}");
+            assert!(image(png).is_ok());
+            assert!(!seen.contains(&png), "{w:?} shares a glyph");
+            seen.push(png);
+        }
+    }
+
+    #[test]
+    fn a_charging_battery_changes_its_glyph() {
+        let mut s = Snapshot::sample();
+        let charging = glyph(Widget::Battery, &s);
+        s.sensors.battery.as_mut().unwrap().charging = false;
+        assert!(!std::ptr::eq(charging, glyph(Widget::Battery, &s)));
+    }
+
+    /// `cargo test -- --ignored menubar_glyphs_are_current` draws the glyphs again from their SVG.
+    #[test]
+    #[ignore]
+    fn menubar_glyphs_are_current() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/menubar");
+        for name in GLYPHS {
+            let svg = std::fs::read(dir.join(format!("{name}.svg"))).unwrap();
+            let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default()).unwrap();
+            let mut pixmap = resvg::tiny_skia::Pixmap::new(GLYPH.0, GLYPH.1).unwrap();
+            // The SVG is 20 × 22, the glyph twice that.
+            resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(2.0, 2.0), &mut pixmap.as_mut());
+            pixmap.save_png(dir.join(format!("{name}.png"))).unwrap();
         }
     }
 

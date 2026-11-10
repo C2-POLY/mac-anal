@@ -1,6 +1,6 @@
 //! The dashboard on screen: a grid of cards that follows the window's width, the processes below.
 
-use egui::{Align2, CornerRadius, FontId, Frame, Margin, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, Vec2};
+use egui::{Align2, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, Vec2};
 
 use super::hardware::Backup;
 use super::history::Point;
@@ -52,18 +52,11 @@ pub fn show_processes(d: &mut Dashboard, ui: &mut Ui) {
 
 /// One section: its title, then its body on a surface.
 fn card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    let p = theme::palette(ui);
-    Frame::new()
-        .fill(p.surface)
-        .stroke(Stroke::new(1.0, p.separator))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.label(RichText::new(title).text_style(theme::headline()));
-            ui.add_space(8.0);
-            body(ui);
-        });
+    theme::card(ui, |ui| {
+        ui.label(RichText::new(title).text_style(theme::title()));
+        ui.add_space(6.0);
+        body(ui);
+    });
 }
 
 fn unavailable(ui: &mut Ui) {
@@ -73,7 +66,7 @@ fn unavailable(ui: &mut Ui) {
 /// A big figure, then a smaller caption beside it.
 fn figure(ui: &mut Ui, value: &str, caption: &str) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(value).size(22.0).strong());
+        ui.label(RichText::new(value).font(theme::figure_font()));
         ui.label(RichText::new(caption).weak());
     });
 }
@@ -87,7 +80,7 @@ fn row(ui: &mut Ui, label: &str, value: impl Into<String>) {
 
 fn bar(ui: &mut Ui, fraction: f32) {
     let p = theme::palette(ui);
-    ui.add(egui::ProgressBar::new(fraction.clamp(0.0, 1.0)).fill(p.data).desired_height(6.0).corner_radius(CornerRadius::same(3)));
+    ui.add(egui::ProgressBar::new(fraction.clamp(0.0, 1.0)).fill(p.data).desired_height(8.0).corner_radius(CornerRadius::same(4)));
 }
 
 fn identity(d: &Dashboard, ui: &mut Ui) {
@@ -116,7 +109,7 @@ fn cpu(d: &Dashboard, ui: &mut Ui) {
     }
 }
 
-/// One small column per core, efficiency cores lighter.
+/// One small column per core, efficiency cores in Corail.
 fn cores(ui: &mut Ui, c: &super::Cpu) {
     let p = theme::palette(ui);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::hover());
@@ -130,7 +123,7 @@ fn cores(ui: &mut Ui, c: &super::Cpu) {
         let track = Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(w, rect.height()));
         painter.rect_filled(track, CornerRadius::same(2), p.free);
         let h = rect.height() * load;
-        let fill = if c.is_efficiency(i) { p.data.gamma_multiply(0.5) } else { p.data };
+        let fill = if c.is_efficiency(i) { theme::CORAL } else { p.data };
         painter.rect_filled(Rect::from_min_max(Pos2::new(x, rect.bottom() - h), Pos2::new(x + w, rect.bottom())), CornerRadius::same(2), fill);
         if response.hover_pos().is_some_and(|pos| track.x_range().contains(pos.x)) {
             hovered = Some(i);
@@ -150,24 +143,27 @@ fn memory(d: &Dashboard, ui: &mut Ui) {
     let p = theme::palette(ui);
     let parts = [
         ("Applications", m.app, p.data),
-        ("Câblée", m.wired, p.data.gamma_multiply(0.75)),
-        ("Compressée", m.compressed, p.data.gamma_multiply(0.5)),
-        ("Cache", m.cached, p.data.gamma_multiply(0.25)),
+        ("Câblée", m.wired, theme::CORAL),
+        ("Compressée", m.compressed, theme::YELLOW),
+        ("Cache", m.cached, p.data_quiet),
     ];
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 12.0), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(3), p.free);
+    painter.rect_filled(rect, CornerRadius::ZERO, p.free);
     let mut x = rect.left();
     for (_, bytes, color) in parts {
         let w = rect.width() * bytes as f32 / m.total.max(1) as f32;
         painter.rect_filled(Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(w, rect.height())), CornerRadius::ZERO, color);
         x += w;
+        // A divider, so a pale share does not melt into the free track.
+        painter.vline(x, rect.y_range(), Stroke::new(1.0, p.line));
     }
+    painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.5, p.line), egui::StrokeKind::Inside);
     ui.add_space(4.0);
     for (name, bytes, color) in parts {
         ui.horizontal(|ui| {
-            let (dot, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
-            ui.painter().circle_filled(dot.center(), 4.0, color);
+            let (dot, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+            ui.painter().circle(dot.center(), 4.5, color, Stroke::new(1.0, p.line));
             ui.label(RichText::new(name).weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(format_bytes(bytes)));
         });
@@ -206,9 +202,9 @@ fn network(d: &Dashboard, ui: &mut Ui) {
     }
     let (down, up) = s.network_rate();
     figure(ui, &format!("↓ {}", rate(down)), &format!("↑ {}", rate(up)));
-    ui.label(RichText::new("Reçu").weak().small());
+    theme::eyebrow(ui, "Reçu");
     curve(ui, &d.history.points(Series::NetIn), None, |v| rate(v as u64));
-    ui.label(RichText::new("Envoyé").weak().small());
+    theme::eyebrow(ui, "Envoyé");
     curve(ui, &d.history.points(Series::NetOut), None, |v| rate(v as u64));
     ui.add_space(6.0);
     for i in &s.interfaces {
@@ -228,9 +224,9 @@ fn disks(d: &Dashboard, ui: &mut Ui) {
     }
     let (read, written) = s.disk_rate();
     figure(ui, &format!("Lecture {}", rate(read)), &format!("Écriture {}", rate(written)));
-    ui.label(RichText::new("Lecture").weak().small());
+    theme::eyebrow(ui, "Lecture");
     curve(ui, &d.history.points(Series::DiskRead), None, |v| rate(v as u64));
-    ui.label(RichText::new("Écriture").weak().small());
+    theme::eyebrow(ui, "Écriture");
     curve(ui, &d.history.points(Series::DiskWrite), None, |v| rate(v as u64));
     ui.add_space(6.0);
     for v in &s.volumes {
@@ -381,7 +377,7 @@ fn curve(ui: &mut Ui, points: &[Point], max: Option<f64>, format: impl Fn(f64) -
     let p = theme::palette(ui);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), CURVE_HEIGHT), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(4), p.free.gamma_multiply(0.5));
+    painter.rect_filled(rect, CornerRadius::same(6), p.free);
     if points.len() < 2 {
         painter.text(rect.center(), Align2::CENTER_CENTER, "historique en cours", FontId::proportional(11.0), p.text_secondary);
         return;
@@ -393,12 +389,12 @@ fn curve(ui: &mut Ui, points: &[Point], max: Option<f64>, format: impl Fn(f64) -
     let x = |at: u64| rect.right() - last.saturating_sub(at) as f32 / span * rect.width();
     let y = |v: f64| rect.bottom() - 2.0 - (v / top).clamp(0.0, 1.0) as f32 * (rect.height() - 4.0);
     let line: Vec<Pos2> = points.iter().map(|(at, v)| Pos2::new(x(*at), y(*v))).collect();
-    painter.add(Shape::line(line, Stroke::new(1.5, p.data)));
+    painter.add(Shape::line(line, Stroke::new(2.0, p.data)));
     if let Some(pos) = response.hover_pos() {
         if let Some((at, v)) = points.iter().min_by(|a, b| (x(a.0) - pos.x).abs().total_cmp(&(x(b.0) - pos.x).abs())) {
             let px = x(*at);
             painter.line_segment([Pos2::new(px, rect.top()), Pos2::new(px, rect.bottom())], Stroke::new(1.0, p.text_secondary));
-            painter.circle_filled(Pos2::new(px, y(*v)), 3.0, p.data);
+            painter.circle(Pos2::new(px, y(*v)), 4.0, theme::CORAL, Stroke::new(1.5, p.line));
             response.on_hover_text_at_pointer(format!("{} à {}", format(*v), clock(*at)));
         }
     }
