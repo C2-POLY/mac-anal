@@ -8,9 +8,9 @@ use crate::journal::{self, Entry};
 use crate::rules::{self, Alert, Rule};
 use crate::tasks::{self, LastRun, Task};
 use crate::assistant::Assistant;
-use crate::overview::Overview;
+use crate::dashboard::{self, Dashboard, Reading};
 use crate::settings::{Settings, Widget};
-use crate::{menubar, metrics};
+use crate::menubar;
 
 /// Frames drawn before the screenshot is taken, so fonts and layout have settled.
 const SHOT_FRAME: u32 = 30;
@@ -18,10 +18,12 @@ const SHOT_FRAME: u32 = 30;
 const SHOT_TIMEOUT: u32 = 600;
 
 pub struct App {
-    overview: Overview,
+    /// Fed by the collector's threads; invented values in the screenshot mode.
+    dashboard: Dashboard,
     assistant: Assistant,
-    /// The readings of the metrics thread; none in the screenshot mode.
-    readings: Option<Receiver<Overview>>,
+    /// The section the sidebar shows, and whether the assistant's panel is open.
+    section: Section,
+    assistant_open: bool,
     settings: Settings,
     settings_path: Option<PathBuf>,
     settings_error: Option<String>,
@@ -55,8 +57,6 @@ impl App {
     pub fn new(cc: &eframe::CreationContext, screenshot: Option<PathBuf>) -> Self {
         crate::theme::apply(&cc.egui_ctx);
         cc.egui_ctx.set_theme(appearance(std::env::var("MAC_ANAL_APPEARANCE").ok().as_deref()));
-        // The screenshot mode reads nothing on the Mac: it shows invented values.
-        let overview = if screenshot.is_some() { Overview::sample() } else { Overview::default() };
         // MAC_ANAL_ASSISTANT=1 shows an invented plan in a screenshot.
         let sample_plan = screenshot.is_some() && std::env::var("MAC_ANAL_ASSISTANT").is_ok_and(|v| v == "1");
         let env = Env::current();
@@ -68,29 +68,37 @@ impl App {
             (None, _) => settings_path.as_deref().map(Settings::load).unwrap_or_default(),
         };
         let env_kept = env.clone();
-        let mut readings = None;
+        // The screenshot mode reads nothing on the Mac: it shows invented values.
+        let mut dashboard = Dashboard::sample();
         if screenshot.is_none() {
             menubar::install(cc.egui_ctx.clone(), env.clone(), &settings);
             let (tx, rx) = mpsc::channel();
             let ctx = cc.egui_ctx.clone();
-            metrics::spawn(move |o| {
-                let _ = tx.send(o);
+            dashboard::spawn(move |r: Reading| {
+                if let Reading::Fast(s) = &r {
+                    menubar::post((**s).clone());
+                }
+                let _ = tx.send(r);
                 ctx.request_repaint();
-                menubar::post(o);
             });
             if let Some(env) = env.clone() {
                 menubar::watch_largest(env);
             }
-            readings = Some(rx);
+            dashboard = Dashboard::live(rx);
         }
+        // MAC_ANAL_SECTION=<section> (for example `journal`) and MAC_ANAL_ASSISTANT=<anything>
+        // choose what a screenshot shows; the window always opens on the dashboard, assistant closed.
+        let section = screenshot.as_ref().and_then(|_| std::env::var("MAC_ANAL_SECTION").ok()).and_then(|s| Section::parse(&s)).unwrap_or_default();
+        let assistant_open = screenshot.is_some() && (std::env::var("MAC_ANAL_ASSISTANT").is_ok() || std::env::var("MAC_ANAL_SCRIPT").is_ok_and(|v| v == "1"));
         let mut assistant = Assistant::new(sample_plan);
         if screenshot.is_some() && std::env::var("MAC_ANAL_SCRIPT").is_ok_and(|v| v == "1") {
             assistant.sample_script();
         }
         Self {
-            overview,
+            dashboard,
             assistant,
-            readings,
+            section,
+            assistant_open,
             settings,
             settings_path,
             settings_error: None,
@@ -151,6 +159,7 @@ impl App {
         }
         if let Some(s) = open {
             self.assistant.load_script(s);
+            self.assistant_open = true;
         }
         if let Some(name) = remove {
             if let Err(e) = scripts::delete(&env, &name) {
@@ -298,6 +307,7 @@ impl App {
             }
             if let Some(m) = explain {
                 self.assistant.explain(ui.ctx(), format!("Explique cette alerte de surveillance et propose des actions : {m}"));
+                self.assistant_open = true;
             }
         }
         if let Some(e) = &self.watch_error {
@@ -488,7 +498,10 @@ impl App {
         ui.label(egui::RichText::new("Les widgets restent à jour fenêtre fermée.").weak());
         ui.add_space(8.0);
         let mut changed = false;
-        let order: Vec<Widget> = self.settings.widgets.iter().copied().chain(Widget::ALL.into_iter().filter(|w| !self.settings.widgets.contains(w))).collect();
+        // The battery widget is offered only on a Mac that has a battery (kept if already chosen).
+        let battery = self.dashboard.snapshot.sensors.battery.is_some();
+        let offered = Widget::ALL.into_iter().filter(|w| *w != Widget::Battery || battery);
+        let order: Vec<Widget> = self.settings.widgets.iter().copied().chain(offered.filter(|w| !self.settings.widgets.contains(w))).collect();
         for w in order {
             let shown = self.settings.widgets.contains(&w);
             ui.horizontal(|ui| {
@@ -509,13 +522,36 @@ impl App {
                 }
             });
         }
-        if changed && self.readings.is_some() {
+        if changed && self.screenshot.is_none() {
             menubar::rebuild(&self.settings);
             self.settings_error = self.settings_path.as_deref().and_then(|p| self.settings.save(p).err());
         }
         if let Some(e) = &self.settings_error {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
+    }
+
+    /// The sidebar: the logotype, one entry per section, then the assistant's switch.
+    fn navigation(&mut self, root: &mut egui::Ui) {
+        egui::Panel::left("navigation").exact_size(210.0).show(root, |ui| {
+            ui.add_space(16.0);
+            crate::brand::logotype(ui, 22.0);
+            ui.add_space(20.0);
+            for s in Section::ALL {
+                let button = egui::Button::selectable(self.section == s, s.label()).min_size(egui::vec2(ui.available_width(), 28.0));
+                if ui.add(button).clicked() {
+                    self.section = s;
+                }
+            }
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+            let label = if self.assistant_open { "Masquer l'assistant" } else { "Assistant" };
+            let button = egui::Button::selectable(self.assistant_open, label).min_size(egui::vec2(ui.available_width(), 28.0));
+            if ui.add(button).on_hover_text("Demander à Claude d'analyser le Mac ou d'écrire un script").clicked() {
+                self.assistant_open = !self.assistant_open;
+            }
+        });
     }
 
     fn screenshot_step(&mut self, ctx: &egui::Context) {
@@ -545,6 +581,41 @@ impl App {
     }
 }
 
+/// The sections of the window, in the sidebar's order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+enum Section {
+    #[default]
+    Dashboard,
+    Processes,
+    Surveillance,
+    Tasks,
+    Scripts,
+    Journal,
+    Settings,
+}
+
+impl Section {
+    const ALL: [Section; 7] = [Self::Dashboard, Self::Processes, Self::Surveillance, Self::Tasks, Self::Scripts, Self::Journal, Self::Settings];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Dashboard => "Tableau de bord",
+            Self::Processes => "Processus",
+            Self::Surveillance => "Surveillance",
+            Self::Tasks => "Tâches planifiées",
+            Self::Scripts => "Scripts",
+            Self::Journal => "Journal",
+            Self::Settings => "Réglages",
+        }
+    }
+
+    /// The section a screenshot asks for: `dashboard`, `processes`, `surveillance`, `tasks`,
+    /// `scripts`, `journal` or `settings`.
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| format!("{s:?}").eq_ignore_ascii_case(name.trim()))
+    }
+}
+
 /// `MAC_ANAL_APPEARANCE=light|dark` forces a theme (for screenshots); anything else follows the system.
 fn appearance(value: Option<&str>) -> ThemePreference {
     match value {
@@ -557,15 +628,15 @@ fn appearance(value: Option<&str>) -> ThemePreference {
 impl eframe::App for App {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
-        egui::Panel::right("assistant").default_size(400.0).min_size(320.0).show(root, |ui| self.assistant.show(ui));
-        if let Some(rx) = &self.readings {
-            if let Some(o) = rx.try_iter().last() {
-                self.overview = o;
-            }
-        }
+        self.dashboard.poll();
         // An alert clicked in the menu bar: the assistant explains it.
         if let Some(a) = menubar::take_explain() {
             self.assistant.explain(&ctx, format!("Explique cette alerte de surveillance et propose des actions : {a}"));
+            self.assistant_open = true;
+        }
+        self.navigation(root);
+        if self.assistant_open {
+            egui::Panel::right("assistant").default_size(400.0).min_size(320.0).show(root, |ui| self.assistant.show(ui));
         }
         // With widgets in the menu bar, closing the window hides it; the menu quits.
         if ctx.input(|i| i.viewport().close_requested()) && menubar::active() {
@@ -573,13 +644,15 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
         egui::CentralPanel::default().show(root, |ui| {
-            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                self.overview.show(ui);
-                self.settings_ui(ui);
-                self.surveillance_ui(ui);
-                self.tasks_ui(ui);
-                self.scripts_ui(ui);
-                self.journal_ui(ui);
+            // One scroll position per section, so changing section starts at its top.
+            egui::ScrollArea::vertical().id_salt(self.section).auto_shrink(false).show(ui, |ui| match self.section {
+                Section::Dashboard => self.dashboard.show(ui),
+                Section::Processes => self.dashboard.show_processes(ui),
+                Section::Surveillance => self.surveillance_ui(ui),
+                Section::Tasks => self.tasks_ui(ui),
+                Section::Scripts => self.scripts_ui(ui),
+                Section::Journal => self.journal_ui(ui),
+                Section::Settings => self.settings_ui(ui),
             });
         });
         self.screenshot_step(&ctx);
@@ -589,6 +662,15 @@ impl eframe::App for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshots_name_a_section_in_english() {
+        assert_eq!(Section::parse("journal"), Some(Section::Journal));
+        assert_eq!(Section::parse(" Processes "), Some(Section::Processes));
+        assert_eq!(Section::parse("tableau"), None);
+        assert_eq!(Section::ALL.len(), 7);
+        assert_eq!(Section::default(), Section::Dashboard);
+    }
 
     #[test]
     fn appearance_follows_the_system_unless_forced() {

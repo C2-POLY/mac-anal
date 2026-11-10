@@ -1,6 +1,6 @@
 [package]
 name = "mac-anal"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
-sysinfo = { version = "0.40", default-features = false, features = ["disk", "system"] }
+sysinfo = { version = "0.40", default-features = false, features = ["component", "disk", "gpu", "network", "system"] }
 tray-icon = { version = "0.26", default-features = false }
 
 [dev-dependencies]
