@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mac Anal — l'analyse de votre Mac, sans casse</title>
+<meta name="description" content="Une app macOS en Rust qui analyse le Mac, propose des actions et peut toutes les défaire. Rien n'est effacé : tout part à la Corbeille.">
+<meta name="theme-color" content="#FFD43B">
+<link rel="icon" href="img/icon-small.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <a class="bar__brand" href="#top" aria-label="Mac Anal, haut de page">
+    <img src="img/icon-small.svg" alt="" width="28" height="28">
+    <span>Mac Anal</span>
+  </a>
+  <nav class="bar__nav">
+    <a href="#jamais">Garde-fous</a>
+    <a href="#chapitres">Ce qu'il fait</a>
+    <a href="#installer">Installer</a>
+    <a class="bar__gh" href="https://github.com/C2-POLY/mac-anal">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<!-- 1. Le logotype qui se balaie tout seul -->
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero__pin">
+    <p class="hero__kicker">Une app macOS · Rust &amp; egui · v0.3</p>
+    <h1 id="hero-title" class="logo" aria-label="Mac Anal">
+      <span class="logo__name">Mac Anal</span><span class="logo__broom" aria-hidden="true"><svg viewBox="0 0 54 78"><g transform="translate(27 49) rotate(-28)"><line x1="0" y1="-52" x2="0" y2="-9" stroke="#161616" stroke-width="5" stroke-linecap="round"/><path d="M-7 -3 L7 -3 L16 22 Q0 26.5 -16 22 Z" fill="#FF5A36" stroke="#161616" stroke-width="2.6" stroke-linejoin="round"/><path d="M-3.5 1 L-7.5 21.5 M0 1 V23 M3.5 1 L7.5 21.5" fill="none" stroke="#161616" stroke-width="1.6" stroke-linecap="round"/><rect x="-8.5" y="-10" width="17" height="8" rx="2.5" fill="#161616"/></g></svg></span><span class="logo__l" data-l="0" aria-hidden="true">y</span><span class="logo__l" data-l="1" aria-hidden="true">s</span><span class="logo__l" data-l="2" aria-hidden="true">e</span>
+    </h1>
+    <div class="hero__foot">
+      <p class="hero__lede">Il regarde ce qui encombre votre Mac, vous dit pourquoi il chauffe, fait le ménage quand vous le lui demandez. <strong>Et il peut tout remettre en place.</strong></p>
+      <div class="hero__cta">
+        <a class="btn btn--ink" href="#installer">Compiler depuis les sources</a>
+        <a class="btn btn--line" href="https://github.com/C2-POLY/mac-anal">Voir le code</a>
+      </div>
+    </div>
+    <p class="hero__hint" aria-hidden="true">défilez, il balaie ↓</p>
+  </div>
+</section>
+
+<!-- 2. Ce qu'il ne fera jamais -->
+<section id="jamais" class="never">
+  <div class="wrap">
+    <p class="eyebrow eyebrow--cream">La règle de la maison</p>
+    <h2 class="never__title">L'IA choisit. L'app exécute.<br>Et voici ce que l'app refuse de faire.</h2>
+    <ol class="never__list">
+      <li><span class="never__n">1</span><span class="never__t"><span class="strike">Lancer une commande libre écrite par l'IA.</span></span><span class="never__why">Claude choisit dans un catalogue d'actions connues et remplit leurs paramètres. Le code qui touche au disque est celui de l'app, pas une phrase générée.</span></li>
+      <li><span class="never__n">2</span><span class="never__t"><span class="strike">Effacer avec <code>rm</code>.</span></span><span class="never__why">Un fichier supprimé part à la Corbeille. Un réglage est sauvegardé avant d'être changé.</span></li>
+      <li><span class="never__n">3</span><span class="never__t"><span class="strike">Passer en <code>sudo</code> dans votre dos.</span></span><span class="never__why">Une action irréversible est expliquée, puis attend votre clic. Une tâche planifiée ou un appel MCP ne peut pas en lancer.</span></li>
+      <li><span class="never__n">4</span><span class="never__t"><span class="strike">Appeler l'IA pour surveiller.</span></span><span class="never__why">Les règles tournent toutes les minutes dans <code>mac-anal check</code>, lancé par launchd, sans réseau.</span></li>
+    </ol>
+  </div>
+</section>
+
+<!-- 3. Les trois niveaux -->
+<section class="levels">
+  <div class="wrap">
+    <p class="eyebrow">Avant chaque action</p>
+    <h2 class="h2">Vous voyez ce qu'elle touche, ce qu'elle libère, et son niveau.</h2>
+    <div class="levels__row">
+      <article class="stamp">
+        <span class="stamp__dot stamp__dot--safe" aria-hidden="true"></span>
+        <h3>Lecture</h3>
+        <p>Mesurer, lister, lire les journaux. L'assistant enquête avec ça, seul, autant qu'il veut.</p>
+        <p class="stamp__eg"><code>du</code> <code>ps</code> <code>log show</code> <code>pmset -g log</code></p>
+      </article>
+      <article class="stamp">
+        <span class="stamp__dot stamp__dot--review" aria-hidden="true"></span>
+        <h3>Réversible</h3>
+        <p>Un clic, et c'est fait. Un clic dans le journal, et c'est défait.</p>
+        <p class="stamp__eg">vider un cache · quitter un processus · couper un élément de démarrage</p>
+      </article>
+      <article class="stamp">
+        <span class="stamp__dot stamp__dot--risky" aria-hidden="true"></span>
+        <h3>Irréversible</h3>
+        <p>Jamais automatique. Expliqué d'abord, confirmé par vous ensuite, et seulement dans l'app.</p>
+        <p class="stamp__eg"><code>sudo</code> · suppression définitive</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Les chapitres -->
+<section id="chapitres" class="chapters">
+  <div class="wrap">
+    <p class="eyebrow">Ce qu'il fait, en huit phrases que vous pourriez lui écrire</p>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">01</span><h3>Enquêter</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>pourquoi mon Mac chauffe depuis hier ?</p>
+        <p>L'assistant enchaîne seul des outils en lecture seule, puis répond avec ce qu'il a trouvé : un extrait de log, un processus, une taille. Chaque étape reste visible.</p>
+      </div>
+      <div class="ch__demo panel">
+        <ol class="steps">
+          <li><code>pmset -g log</code><span>aucune mise en veille depuis 21 h</span></li>
+          <li><code>ps -Ao pcpu,comm</code><span>mds_stores à 94 %</span></li>
+          <li><code>log show --last 1d</code><span>Spotlight indexe « Archives » en boucle</span></li>
+        </ol>
+        <p class="panel__note">Exemple d'enquête</p>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">02</span><h3>Agir</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>libère de la place sur mon disque</p>
+        <p>Pas de conseil à recopier dans un terminal : un plan d'actions prêtes, chacune avec son effet annoncé. L'app les exécute de façon déterministe.</p>
+      </div>
+      <div class="ch__demo panel">
+        <div class="action">
+          <span class="stamp__dot stamp__dot--review" aria-hidden="true"></span>
+          <div>
+            <p class="action__t">Vider les DerivedData de Xcode</p>
+            <p class="action__s">~/Library/Developer/Xcode/DerivedData · 18,4 Go · part à la Corbeille</p>
+          </div>
+          <span class="pill">Lancer</span>
+        </div>
+        <div class="action">
+          <span class="stamp__dot stamp__dot--review" aria-hidden="true"></span>
+          <div>
+            <p class="action__t">Désactiver « Updater » au démarrage</p>
+            <p class="action__s">LaunchAgent sauvegardé avant le changement</p>
+          </div>
+          <span class="pill">Lancer</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">03</span><h3>Écrire un script</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>trouve les vidéos de plus de 2 Go dans Téléchargements</p>
+        <p>Pour ce que le catalogue ne couvre pas, il écrit un script zsh. L'app le résume, le lance d'abord à blanc dans un bac à sable en lecture seule, et ne l'exécute pour de vrai qu'après votre accord.</p>
+      </div>
+      <div class="ch__demo panel panel--code">
+<pre><code><span class="c">#!/bin/zsh</span>
+find ~/Downloads -type f \
+  \( -name '*.mov' -o -name '*.mp4' \) \
+  -size +2G -exec du -h {} +</code></pre>
+        <p class="panel__note"><code>sandbox-exec</code> · 0 fichier écrit · pas de réseau · pas de sudo</p>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">04</span><h3>Surveiller</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>préviens-moi si le disque passe sous 10 %</p>
+        <p>La phrase devient une règle que vous relisez avant qu'elle soit enregistrée. Ensuite, launchd la vérifie chaque minute, même Mac Anal fermé, sans IA.</p>
+      </div>
+      <div class="ch__demo panel">
+        <dl class="rule">
+          <dt>mesure</dt><dd>espace disque libre</dd>
+          <dt>seuil</dt><dd>&lt; 10 %</dd>
+          <dt>fréquence</dt><dd>toutes les minutes</dd>
+          <dt>vérifiée par</dt><dd><code>mac-anal check</code></dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">05</span><h3>Planifier</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>chaque lundi, vide les DerivedData de plus de 30 jours</p>
+        <p>Un vrai LaunchAgent dans <code>~/Library/LaunchAgents</code>, que vous voyez avant qu'il soit chargé. Une tâche ne lance que des actions réversibles ou des scripts de votre bibliothèque.</p>
+      </div>
+      <div class="ch__demo panel panel--code">
+<pre><code><span class="c">&lt;key&gt;</span>StartCalendarInterval<span class="c">&lt;/key&gt;</span>
+<span class="c">&lt;dict&gt;</span>
+  <span class="c">&lt;key&gt;</span>Weekday<span class="c">&lt;/key&gt;</span> <span class="c">&lt;integer&gt;</span>1<span class="c">&lt;/integer&gt;</span>
+  <span class="c">&lt;key&gt;</span>Hour<span class="c">&lt;/key&gt;</span>    <span class="c">&lt;integer&gt;</span>9<span class="c">&lt;/integer&gt;</span>
+<span class="c">&lt;/dict&gt;</span></code></pre>
+        <p class="panel__note">prochaine exécution : lundi 9:00</p>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">06</span><h3>Tenir le journal</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>qu'est-ce que tu as fait cette semaine ?</p>
+        <p>Chaque action s'inscrit avec son origine (vous, une tâche, MCP), la mesure avant et après, et un bouton pour l'annuler. Essayez.</p>
+      </div>
+      <div class="ch__demo panel">
+        <ul class="journal">
+          <li class="journal__e">
+            <div><p class="action__t">Cache de Safari vidé</p><p class="action__s">lun. 9:00 · tâche planifiée · 2,1 Go → 0 o</p></div>
+            <button class="pill pill--btn" type="button">Annuler</button>
+          </li>
+          <li class="journal__e">
+            <div><p class="action__t">Spotlight : « Archives » exclu</p><p class="action__s">mar. 14:12 · vous · CPU 94 % → 6 %</p></div>
+            <button class="pill pill--btn" type="button">Annuler</button>
+          </li>
+          <li class="journal__e">
+            <div><p class="action__t">Processus « Updater » quitté</p><p class="action__s">mer. 18:40 · MCP · mémoire 1,3 Go libérée</p></div>
+            <button class="pill pill--btn" type="button">Annuler</button>
+          </li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">07</span><h3>Rester en haut de l'écran</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>montre-moi le disque dans la barre des menus</p>
+        <p>Des widgets en direct dans la barre des menus, dans l'ordre que vous choisissez. Un clic ouvre le détail et des actions rapides, réversibles seulement.</p>
+      </div>
+      <div class="ch__demo">
+        <div class="menubar" aria-hidden="true">
+          <span class="menubar__app"></span>
+          <span class="menubar__sp"></span>
+          <span class="menubar__w"><img src="img/broom.svg" alt="">182 Go</span>
+          <span class="menubar__w">Mém. 11/16</span>
+          <span class="menubar__w">CPU 23 %</span>
+          <span class="menubar__clock">lun. 9:41</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="ch">
+      <header class="ch__head"><span class="ch__n">08</span><h3>Répondre à Claude</h3></header>
+      <div class="ch__body">
+        <p class="ask" data-type>(depuis Claude Code) combien de place prend Docker ?</p>
+        <p><code>mac-anal mcp</code> est un serveur MCP. Claude Desktop et Claude Code lisent les mesures et le journal, et lancent les actions réversibles, journalisées avec l'origine « MCP ». Les irréversibles restent dans l'app.</p>
+      </div>
+      <div class="ch__demo panel panel--code">
+<pre><code>claude mcp add mac-anal -- \
+  /chemin/vers/mac-anal/app/target/release/mac-anal mcp</code></pre>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- 5. La fenêtre -->
+<section class="shot">
+  <div class="wrap">
+    <p class="eyebrow">La fenêtre</p>
+    <h2 class="h2">Une app native, dessinée avec egui, qui suit le thème du Mac.</h2>
+    <figure class="window">
+      <div class="window__bar" aria-hidden="true"><i></i><i></i><i></i><span>Mac Anal</span></div>
+      <picture>
+        <source srcset="img/app-dark.jpg" media="(prefers-color-scheme: dark)">
+        <img src="img/app-light.jpg" alt="La fenêtre de Mac Anal : la barre latérale, le tableau de bord (processeur, mémoire, graphisme) et l'assistant qui propose deux actions réversibles et une irréversible." width="1600" height="1047" loading="lazy">
+      </picture>
+    </figure>
+    <p class="shot__cap">Capture de la v0.3 sur des données d'exemple, faite par l'app elle-même : <code>mac-anal --screenshot</code>.</p>
+  </div>
+</section>
+
+<!-- 6. Installer -->
+<section id="installer" class="install">
+  <div class="wrap install__grid">
+    <div>
+      <p class="eyebrow eyebrow--cream">Installer</p>
+      <h2 class="h2">Pas encore de .dmg. Trois commandes.</h2>
+      <p class="install__p">Il faut macOS et Rust 1.95 ou plus récent, installé avec rustup (le <code>rust</code> de Homebrew est trop ancien). L'assistant s'appuie sur Claude : ce qu'il lit sur le Mac pour répondre (processus, journaux, tailles) lui est envoyé. Le reste de l'app fonctionne sans.</p>
+    </div>
+    <div class="term">
+      <div class="term__bar" aria-hidden="true"><i></i><i></i><i></i></div>
+<pre><code><span class="p">$</span> brew install rustup
+<span class="p">$</span> git clone https://github.com/C2-POLY/mac-anal
+<span class="p">$</span> cd mac-anal/app &amp;&amp; cargo run</code></pre>
+      <button class="term__copy" type="button" data-copy="brew install rustup&#10;git clone https://github.com/C2-POLY/mac-anal&#10;cd mac-anal/app && cargo run">Copier</button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__row">
+    <p>Mac Anal est un projet open source de <a href="https://github.com/C2-POLY">C2-POLY</a>, sous licence MIT ou Apache-2.0, au choix.</p>
+    <p>Logotype en Bricolage Grotesque (SIL OFL). Le balai ne mord pas.</p>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.min.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

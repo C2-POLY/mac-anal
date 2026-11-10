@@ -42,6 +42,14 @@ The colours, fonts, logotype and icon follow the [design document](https://claud
 cargo test -- --ignored icon_png_is_current
 ```
 
+## Product page
+
+`site/` is the product page, plain HTML, CSS and JS (GSAP and Lenis from a CDN), published to GitHub Pages by `.github/workflows/pages.yml` on every push to `main` that touches it. To look at it locally:
+
+```bash
+python3 -m http.server 4173 --directory site
+```
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
