@@ -72,7 +72,7 @@ impl ScriptCard {
             ui.label(RichText::new(&self.purpose).strong());
         });
         ScrollArea::vertical().id_salt("script").max_height(160.0).show(ui, |ui| {
-            ui.add(egui::TextEdit::multiline(&mut self.script.as_str()).code_editor().desired_width(f32::INFINITY));
+            crate::theme::field(ui, |ui| ui.add(egui::TextEdit::multiline(&mut self.script.as_str()).code_editor().desired_width(f32::INFINITY)));
         });
         let s = &self.summary;
         let list = |v: &[String]| if v.is_empty() { "aucun".to_string() } else { v.join(", ") };
@@ -155,7 +155,7 @@ impl ScriptCard {
                 ui.label(RichText::new(format!("Dans la bibliothèque : {name}")).small().weak());
             }
             (None, Some(env)) => {
-                if ui.small_button("Enregistrer dans la bibliothèque").clicked() {
+                if ui.button("Enregistrer dans la bibliothèque").clicked() {
                     match scripts::save(env, &self.purpose, &self.script, journal::now()) {
                         Ok(saved) => self.saved = Some(saved.name),
                         Err(e) => self.stage = Stage::Failed(e),

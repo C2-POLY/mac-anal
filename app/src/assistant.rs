@@ -5,7 +5,7 @@
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 
-use egui::{CornerRadius, Frame, Margin, RichText, Stroke};
+use egui::RichText;
 use serde_json::Value;
 
 use crate::actions::{self, Action, Done, Env, Level, Prepared};
@@ -162,20 +162,22 @@ impl Assistant {
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.poll();
-        ui.add_space(8.0);
+        ui.add_space(24.0);
         ui.heading("Assistant");
         ui.add_space(8.0);
-        ui.add(
-            egui::TextEdit::multiline(&mut self.question)
-                .hint_text("Ex. : libère de la place sur mon disque")
-                .desired_rows(3)
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(4.0);
+        theme::field(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut self.question)
+                    .hint_text("Ex. : libère de la place sur mon disque")
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            )
+        });
+        ui.add_space(6.0);
         let busy = self.pending.is_some();
         ui.horizontal(|ui| {
             let ready = !busy && self.writing.is_none() && !self.question.trim().is_empty();
-            if ui.add_enabled(ready, theme::primary_button(ui, "Demander")).clicked() {
+            if ui.add_enabled(ready, theme::primary_button("Demander")).clicked() {
                 self.ask(ui.ctx());
             }
             if ui.add_enabled(ready, egui::Button::new("Écrire un script")).on_hover_text("Pour ce que les actions connues ne couvrent pas.").clicked() {
@@ -193,7 +195,7 @@ impl Assistant {
         ui.label(RichText::new("Ce que l'assistant lit sur le Mac (processus, journaux, tailles) est envoyé à Claude.").small().weak());
         if !self.steps.is_empty() {
             ui.add_space(8.0);
-            ui.label(RichText::new("Enquête").strong());
+            theme::eyebrow(ui, "Enquête");
             for (label, lines) in &self.steps {
                 ui.label(RichText::new(format!("• {label} ({lines} lignes lues)")).weak());
             }
@@ -205,23 +207,14 @@ impl Assistant {
         let env = self.env.clone();
         if let Some(card) = &mut self.script {
             ui.add_space(12.0);
-            let visuals = ui.visuals().clone();
-            Frame::new()
-                .fill(visuals.faint_bg_color)
-                .stroke(Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color))
-                .corner_radius(CornerRadius::same(8))
-                .inner_margin(Margin::same(12))
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    card.show(ui, env.as_ref());
-                });
+            theme::card(ui, |ui| card.show(ui, env.as_ref()));
         }
         let Some(plan) = &mut self.plan else { return };
         ui.add_space(12.0);
         ui.label(&plan.message);
         if !plan.evidence.is_empty() {
             ui.add_space(4.0);
-            ui.label(RichText::new("Éléments relevés").strong());
+            theme::eyebrow(ui, "Éléments relevés");
             for e in &plan.evidence {
                 ui.label(RichText::new(format!("• {e}")).weak());
             }
@@ -247,77 +240,70 @@ fn level_safety(level: Level) -> Safety {
 
 fn item_card(ui: &mut egui::Ui, env: Option<&Env>, item: &mut Item) {
     let visuals = ui.visuals().clone();
-    let palette = theme::palette(ui);
-    Frame::new()
-        .fill(palette.surface)
-        .stroke(Stroke::new(1.0, palette.separator))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::same(12))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let p = match &item.proposal {
-                Ok(p) => p,
-                Err(why) => {
-                    ui.label(RichText::new("Action refusée").text_style(theme::headline()));
-                    ui.label(RichText::new(why).weak());
-                    return;
-                }
-            };
-            ui.horizontal(|ui| {
-                brand::safety_icon(ui, level_safety(p.level));
-                ui.label(RichText::new(p.level.label()).small());
-                ui.label(RichText::new(&p.title).text_style(theme::headline()));
-            });
-            ui.label(RichText::new(&p.preview).weak());
-            ui.add_space(4.0);
-            let mut next = None;
-            match &item.state {
-                State::Ready => {
-                    let text = if p.level == Level::Irreversible { "Lancer…" } else { "Lancer" };
-                    if ui.add_enabled(env.is_some(), egui::Button::new(text)).clicked() {
-                        next = Some(if p.level == Level::Irreversible { State::Confirming } else { run(env, p, false) });
-                    }
-                }
-                State::Confirming => {
-                    ui.horizontal(|ui| {
-                        brand::safety_icon(ui, Safety::Risky);
-                        ui.label("Cette action ne peut pas être annulée.");
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("Confirmer").clicked() {
-                            next = Some(run(env, p, true));
-                        }
-                        if ui.button("Renoncer").clicked() {
-                            next = Some(State::Ready);
-                        }
-                    });
-                }
-                State::Done(done) => {
-                    ui.label(&done.summary);
-                    if let Some(u) = &done.undo {
-                        if ui.button("Annuler").clicked() {
-                            let undone = match (env, done.entry) {
-                                (Some(env), Some(id)) => journal::undo(env, id),
-                                _ => actions::undo(u),
-                            };
-                            next = Some(match undone {
-                                Ok(()) => State::Undone,
-                                Err(e) => State::Failed(e),
-                            });
-                        }
-                    }
-                }
-                State::Undone => {
-                    ui.label(RichText::new("Annulé : tout est remis en place.").weak());
-                }
-                State::Failed(e) => {
-                    ui.colored_label(visuals.error_fg_color, e);
-                }
+    theme::card(ui, |ui| {
+        let p = match &item.proposal {
+            Ok(p) => p,
+            Err(why) => {
+                ui.label(RichText::new("Action refusée").text_style(theme::headline()));
+                ui.label(RichText::new(why).weak());
+                return;
             }
-            if let Some(s) = next {
-                item.state = s;
-            }
+        };
+        ui.horizontal(|ui| {
+            brand::safety_icon(ui, level_safety(p.level));
+            ui.label(RichText::new(p.level.label()).small());
+            ui.label(RichText::new(&p.title).text_style(theme::headline()));
         });
+        ui.label(RichText::new(&p.preview).weak());
+        ui.add_space(4.0);
+        let mut next = None;
+        match &item.state {
+            State::Ready => {
+                let text = if p.level == Level::Irreversible { "Lancer…" } else { "Lancer" };
+                if ui.add_enabled(env.is_some(), egui::Button::new(text)).clicked() {
+                    next = Some(if p.level == Level::Irreversible { State::Confirming } else { run(env, p, false) });
+                }
+            }
+            State::Confirming => {
+                ui.horizontal(|ui| {
+                    brand::safety_icon(ui, Safety::Risky);
+                    ui.label("Cette action ne peut pas être annulée.");
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Confirmer").clicked() {
+                        next = Some(run(env, p, true));
+                    }
+                    if ui.button("Renoncer").clicked() {
+                        next = Some(State::Ready);
+                    }
+                });
+            }
+            State::Done(done) => {
+                ui.label(&done.summary);
+                if let Some(u) = &done.undo {
+                    if ui.button("Annuler").clicked() {
+                        let undone = match (env, done.entry) {
+                            (Some(env), Some(id)) => journal::undo(env, id),
+                            _ => actions::undo(u),
+                        };
+                        next = Some(match undone {
+                            Ok(()) => State::Undone,
+                            Err(e) => State::Failed(e),
+                        });
+                    }
+                }
+            }
+            State::Undone => {
+                ui.label(RichText::new("Annulé : tout est remis en place.").weak());
+            }
+            State::Failed(e) => {
+                ui.colored_label(visuals.error_fg_color, e);
+            }
+        }
+        if let Some(s) = next {
+            item.state = s;
+        }
+    });
 }
 
 fn run(env: Option<&Env>, p: &Prepared, confirmed: bool) -> State {

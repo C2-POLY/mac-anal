@@ -35,11 +35,19 @@ Claude Desktop, in `~/Library/Application Support/Claude/claude_desktop_config.j
 
 The colours, fonts, logotype and icon follow the [design document](https://claude.ai/artifact/LrLhk84VLHVZVRL5dpCriD); its tokens live in `app/src/theme.rs`, the logotype and safety icons in `app/src/brand.rs`.
 
-- Bricolage Grotesque, the brand font, ships in `app/assets/` under the SIL Open Font License (`OFL.txt`). The interface uses SF, read from `/System/Library/Fonts` at launch, and falls back to egui's font without it.
+The window uses those tokens the way the product page does (`site/style.css`): a cream background (ink in the dark), a yellow sidebar, cards with a heavy edge and a hard shadow, titles in Bricolage Grotesque, pill buttons, and measures drawn in ink, coral and yellow. The shared pieces (`card`, `primary_button`, `eyebrow`, `field`) are in `app/src/theme.rs`; a screen calls them instead of drawing its own frame.
+
+- Bricolage Grotesque, the brand font, ships in `app/assets/` under the SIL Open Font License (`OFL.txt`). The body text uses SF, read from `/System/Library/Fonts` at launch, and falls back to egui's font without it.
 - `app/assets/` holds the icon sources from the document (`broom.svg`, `icon-foreground.svg`, `icon-legacy.svg`, `icon-small.svg`). The Dock icon is `icon.png`, drawn from `icon-legacy.svg`; after changing the SVG, draw it again:
 
 ```bash
 cargo test -- --ignored icon_png_is_current
+```
+
+- `app/assets/menubar/` holds the glyphs of the menu bar widgets, one SVG each and the PNG drawn from it. They are template images of one size, so macOS tints them and they line up with the value beside them. After changing an SVG, draw the PNGs again:
+
+```bash
+cargo test -- --ignored menubar_glyphs_are_current
 ```
 
 ## Product page

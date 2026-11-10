@@ -149,10 +149,10 @@ impl App {
         for s in &self.library.1 {
             ui.horizontal(|ui| {
                 ui.label(&s.purpose);
-                if ui.small_button("Ouvrir").on_hover_text("Le relire, l'essayer à blanc ou le relancer").clicked() {
+                if ui.button("Ouvrir").on_hover_text("Le relire, l'essayer à blanc ou le relancer").clicked() {
                     open = Some(s.clone());
                 }
-                if ui.small_button("Supprimer").on_hover_text("Il part dans la Corbeille").clicked() {
+                if ui.button("Supprimer").on_hover_text("Il part dans la Corbeille").clicked() {
                     remove = Some(s.name.clone());
                 }
             });
@@ -206,7 +206,7 @@ impl App {
         ui.label(egui::RichText::new("Vérifiée chaque minute en arrière-plan par launchd, sans réseau ni IA, même Mac Anal fermé.").weak());
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.watch_sentence).hint_text("Ex. : préviens-moi si le disque passe sous 10 %").desired_width(360.0));
+            crate::theme::field(ui, |ui| ui.add(egui::TextEdit::singleline(&mut self.watch_sentence).hint_text("Ex. : préviens-moi si le disque passe sous 10 %").desired_width(360.0)));
             let ready = self.watch_pending.is_none() && !self.watch_sentence.trim().is_empty();
             if ui.add_enabled(ready, egui::Button::new("Créer la règle")).clicked() {
                 let (tx, rx) = mpsc::channel();
@@ -274,7 +274,7 @@ impl App {
                 if ui.add(egui::DragValue::new(&mut r.threshold).speed(0.5)).on_hover_text("Seuil").changed() {
                     edited = true;
                 }
-                if ui.small_button("Supprimer").clicked() {
+                if ui.button("Supprimer").clicked() {
                     remove = Some(r.id);
                 }
             });
@@ -300,7 +300,7 @@ impl App {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new(journal::date(a.at)).weak().monospace());
                     ui.label(&a.message);
-                    if ui.small_button("Expliquer").clicked() {
+                    if ui.button("Expliquer").clicked() {
                         explain = Some(a.message.clone());
                     }
                 });
@@ -355,7 +355,7 @@ impl App {
         ui.label(egui::RichText::new("Lancées par launchd à leur heure, même Mac Anal fermé : actions réversibles et scripts en lecture seule uniquement.").weak());
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.task_sentence).hint_text("Ex. : chaque lundi, vide les DerivedData de plus de 30 jours").desired_width(360.0));
+            crate::theme::field(ui, |ui| ui.add(egui::TextEdit::singleline(&mut self.task_sentence).hint_text("Ex. : chaque lundi, vide les DerivedData de plus de 30 jours").desired_width(360.0)));
             let ready = self.task_pending.is_none() && !self.task_sentence.trim().is_empty();
             if ui.add_enabled(ready, egui::Button::new("Préparer la tâche")).clicked() {
                 let (tx, rx) = mpsc::channel();
@@ -426,7 +426,7 @@ impl App {
                         ui.label(egui::RichText::new(format!("prochaine : {}", journal::date(next))).weak());
                     }
                 }
-                if ui.small_button("Supprimer").clicked() {
+                if ui.button("Supprimer").clicked() {
                     remove = Some(t.id);
                 }
             });
@@ -475,7 +475,7 @@ impl App {
                 ui.label(egui::RichText::new(journal::date(e.at)).weak().monospace());
                 ui.label(egui::RichText::new(&e.title).strong());
                 ui.label(egui::RichText::new(e.origin.label()).small().weak());
-                if e.undo.is_some() && !e.undone && e.error.is_none() && ui.small_button("Annuler").clicked() {
+                if e.undo.is_some() && !e.undone && e.error.is_none() && ui.button("Annuler").clicked() {
                     undo = Some(e.id);
                 }
             });
@@ -511,11 +511,11 @@ impl App {
                     changed = true;
                 }
                 if shown {
-                    if ui.small_button("<").on_hover_text("Plus à gauche").clicked() {
+                    if ui.button("<").on_hover_text("Plus à gauche").clicked() {
                         self.settings.shift(w, -1);
                         changed = true;
                     }
-                    if ui.small_button(">").on_hover_text("Plus à droite").clicked() {
+                    if ui.button(">").on_hover_text("Plus à droite").clicked() {
                         self.settings.shift(w, 1);
                         changed = true;
                     }
@@ -533,7 +533,10 @@ impl App {
 
     /// The sidebar: the logotype, one entry per section, then the assistant's switch.
     fn navigation(&mut self, root: &mut egui::Ui) {
-        egui::Panel::left("navigation").exact_size(210.0).show(root, |ui| {
+        let p = crate::theme::palette(root);
+        let frame = egui::Frame::new().fill(p.sidebar).inner_margin(egui::Margin::symmetric(12, 0));
+        let panel = egui::Panel::left("navigation").exact_size(210.0).frame(frame).show_separator_line(false).show(root, |ui| {
+            crate::theme::sidebar(ui);
             ui.add_space(16.0);
             crate::brand::logotype(ui, 22.0);
             ui.add_space(20.0);
@@ -552,6 +555,9 @@ impl App {
                 self.assistant_open = !self.assistant_open;
             }
         });
+        // The page's heavy line closes the sidebar.
+        let edge = panel.response.rect;
+        root.painter().vline(edge.right() - 1.0, edge.y_range(), egui::Stroke::new(2.0, p.line));
     }
 
     fn screenshot_step(&mut self, ctx: &egui::Context) {
@@ -636,14 +642,23 @@ impl eframe::App for App {
         }
         self.navigation(root);
         if self.assistant_open {
-            egui::Panel::right("assistant").default_size(400.0).min_size(320.0).show(root, |ui| self.assistant.show(ui));
+            let p = crate::theme::palette(root);
+            let frame = egui::Frame::new().fill(p.window).inner_margin(egui::Margin::symmetric(18, 0));
+            // The panel's own edge is the page's heavy line; egui still highlights it while resizing.
+            let thin = std::mem::replace(&mut root.visuals_mut().widgets.noninteractive.bg_stroke, egui::Stroke::new(2.0, p.line));
+            egui::Panel::right("assistant").default_size(420.0).min_size(340.0).frame(frame).show(root, |ui| {
+                ui.visuals_mut().widgets.noninteractive.bg_stroke = thin;
+                self.assistant.show(ui);
+            });
+            root.visuals_mut().widgets.noninteractive.bg_stroke = thin;
         }
         // With widgets in the menu bar, closing the window hides it; the menu quits.
         if ctx.input(|i| i.viewport().close_requested()) && menubar::active() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
-        egui::CentralPanel::default().show(root, |ui| {
+        let frame = egui::Frame::new().fill(crate::theme::palette(root).window).inner_margin(egui::Margin::symmetric(20, 0));
+        egui::CentralPanel::default().frame(frame).show(root, |ui| {
             // One scroll position per section, so changing section starts at its top.
             egui::ScrollArea::vertical().id_salt(self.section).auto_shrink(false).show(ui, |ui| match self.section {
                 Section::Dashboard => self.dashboard.show(ui),
