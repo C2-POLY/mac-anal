@@ -1,8 +1,6 @@
-use egui::{CornerRadius, Frame, Margin, RichText, Stroke};
+//! The three historical measures and the byte formatting the whole app shares.
 
-use crate::theme;
-
-/// What the overview shows. Every measure is `None` until it has been read.
+/// The three measures. Every measure is `None` until it has been read.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Overview {
     pub disk: Option<Usage>,
@@ -17,20 +15,6 @@ pub struct Usage {
     pub total: u64,
 }
 
-impl Usage {
-    fn fraction(self) -> f32 {
-        if self.total == 0 {
-            0.0
-        } else {
-            self.used as f32 / self.total as f32
-        }
-    }
-
-    fn label(self) -> String {
-        format!("{} / {}", format_bytes(self.used), format_bytes(self.total))
-    }
-}
-
 const GB: u64 = 1_000_000_000;
 
 impl Overview {
@@ -42,44 +26,6 @@ impl Overview {
             cpu: Some(0.23),
         }
     }
-
-    pub fn show(&self, ui: &mut egui::Ui) {
-        ui.add_space(16.0);
-        crate::brand::logotype(ui, 28.0);
-        ui.add_space(24.0);
-        ui.heading("Vue d'ensemble");
-        ui.add_space(12.0);
-        ui.columns(3, |cols| {
-            card(&mut cols[0], "Disque", self.disk.map(|u| (u.fraction(), u.label())));
-            card(&mut cols[1], "Mémoire", self.memory.map(|u| (u.fraction(), u.label())));
-            card(&mut cols[2], "Processeur", self.cpu.map(|c| (c, format!("{:.0} %", c * 100.0))));
-        });
-    }
-}
-
-/// One measure: its title, then a bar and a value, or a dash while nothing is measured.
-fn card(ui: &mut egui::Ui, title: &str, value: Option<(f32, String)>) {
-    let p = theme::palette(ui);
-    Frame::new()
-        .fill(p.surface)
-        .stroke(Stroke::new(1.0, p.separator))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.label(RichText::new(title).text_style(theme::headline()));
-            ui.add_space(8.0);
-            match value {
-                Some((fraction, text)) => {
-                    ui.add(egui::ProgressBar::new(fraction).fill(p.data).corner_radius(CornerRadius::same(4)));
-                    ui.add_space(4.0);
-                    ui.label(text);
-                }
-                None => {
-                    ui.label(RichText::new("—").weak());
-                }
-            }
-        });
 }
 
 /// A size in bytes, in the decimal units macOS shows (1 Go = 10⁹ octets).
@@ -118,10 +64,5 @@ mod tests {
         assert!(sample.disk.is_some() && sample.memory.is_some() && sample.cpu.is_some());
         let empty = Overview::default();
         assert!(empty.disk.is_none() && empty.memory.is_none() && empty.cpu.is_none());
-    }
-
-    #[test]
-    fn an_empty_total_is_not_a_division_by_zero() {
-        assert_eq!(Usage { used: 5, total: 0 }.fraction(), 0.0);
     }
 }

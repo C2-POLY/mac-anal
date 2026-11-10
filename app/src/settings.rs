@@ -13,16 +13,28 @@ pub enum Widget {
     Disk,
     Memory,
     Cpu,
+    Gpu,
+    Network,
+    Temperature,
+    Fan,
+    Battery,
+    Swap,
 }
 
 impl Widget {
-    pub const ALL: [Widget; 3] = [Widget::Disk, Widget::Memory, Widget::Cpu];
+    pub const ALL: [Widget; 9] = [Widget::Disk, Widget::Memory, Widget::Cpu, Widget::Gpu, Widget::Network, Widget::Temperature, Widget::Fan, Widget::Battery, Widget::Swap];
 
     pub fn name(self) -> &'static str {
         match self {
             Widget::Disk => "Disque",
             Widget::Memory => "Mémoire",
             Widget::Cpu => "Processeur",
+            Widget::Gpu => "GPU",
+            Widget::Network => "Réseau",
+            Widget::Temperature => "Température",
+            Widget::Fan => "Ventilateur",
+            Widget::Battery => "Batterie",
+            Widget::Swap => "Swap",
         }
     }
 }

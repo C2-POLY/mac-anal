@@ -1,15 +1,11 @@
-//! The Mac's measures, read only: free space on the startup volume, memory, processor load. A
-//! thread refreshes them every few seconds and hands each reading to a callback.
+//! The Mac's three historical measures, read only: free space on the startup volume, memory,
+//! processor load. The dashboard's collector, the surveillance and the MCP server read them here.
 
 use std::path::Path;
-use std::time::Duration;
 
 use sysinfo::{Disks, System};
 
 use crate::overview::{Overview, Usage};
-
-/// Time between two readings: cheap enough to run all day, fresh enough for the menu bar.
-pub const INTERVAL: Duration = Duration::from_secs(5);
 
 /// One reading. The processor load needs two readings apart, so the first one has none.
 pub fn read(sys: &mut System, disks: &mut Disks, first: bool) -> Overview {
@@ -23,23 +19,6 @@ pub fn read(sys: &mut System, disks: &mut Disks, first: bool) -> Overview {
     let memory = Some(Usage { used: sys.used_memory(), total: sys.total_memory() }).filter(|u| u.total > 0);
     let cpu = (!first).then(|| (sys.global_cpu_usage() / 100.0).clamp(0.0, 1.0));
     Overview { disk, memory, cpu }
-}
-
-/// Reads forever on its own thread and calls `on_reading` with each reading.
-pub fn spawn(on_reading: impl Fn(Overview) + Send + 'static) {
-    std::thread::Builder::new()
-        .name("metrics".into())
-        .spawn(move || {
-            let Ok(mut sys) = System::new() else { return };
-            let Ok(mut disks) = Disks::new_with_refreshed_list() else { return };
-            let mut first = true;
-            loop {
-                on_reading(read(&mut sys, &mut disks, first));
-                first = false;
-                std::thread::sleep(INTERVAL);
-            }
-        })
-        .expect("start the metrics thread");
 }
 
 #[cfg(test)]

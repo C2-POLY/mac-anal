@@ -96,7 +96,10 @@ fn call(env: &Env, name: &str, args: &Value) -> Result<String, String> {
             crate::metrics::read(&mut sys, &mut disks, true);
             std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
             let o = crate::metrics::read(&mut sys, &mut disks, false);
-            Ok(crate::settings::Widget::ALL.iter().map(|w| crate::menubar::detail(*w, &o)).collect::<Vec<_>>().join("\n"))
+            // The three historical measures only, each on its summary line, as before the dashboard.
+            let s = crate::dashboard::Snapshot { overview: o, ..Default::default() };
+            use crate::settings::Widget;
+            Ok([Widget::Disk, Widget::Memory, Widget::Cpu].iter().map(|w| crate::menubar::detail(*w, &s).swap_remove(0)).collect::<Vec<_>>().join("\n"))
         }
         "analysis" => Ok(crate::assistant::context(env)),
         "journal" => {

@@ -3,6 +3,7 @@ mod ai;
 mod app;
 mod assistant;
 mod brand;
+mod dashboard;
 mod investigate;
 mod journal;
 mod launchd;
